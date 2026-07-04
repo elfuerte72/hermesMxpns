@@ -41,6 +41,7 @@ model Deploy {
   status               DeployStatus @default(pending)
   bootstrap_token_hash String
   bootstrap_used_at    DateTime?
+  webhook_secret_hash  String?
   vm_ip                String?
   paid_until           DateTime?
   created_at           DateTime     @default(now())

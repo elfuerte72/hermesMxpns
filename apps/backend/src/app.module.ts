@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { LlmProvidersModule } from './llm-providers/llm-providers.module';
 import { BotModule } from './bot/bot.module';
 import { DeploysModule } from './deploys/deploys.module';
+import { BootstrapModule } from './bootstrap/bootstrap.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { DeploysModule } from './deploys/deploys.module';
     LlmProvidersModule,
     BotModule,
     DeploysModule,
+    BootstrapModule,
   ],
   controllers: [AppController],
   providers: [AppService],

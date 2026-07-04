@@ -255,3 +255,19 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 ### Прочее (Phase 2)
 - Полная статистика Phase 2: 13 test suites, 72 теста (было 23 в Phase 1). `npm run build`/`lint`/`typecheck` зелёные. Smoke-тест: валидный initData → 200 + upsert в Postgres, tampered hash → 401, `validate-bot-token` под валидным TMA-auth → 422 (фейк-токен).
 
+## 16. Phase 3 implementation findings (Tasks 9–11, verified 2026-07-04)
+> Уточнения к §6/§9/§10, принятые при реализации deploy happy-path.
+
+### Task 9 — `POST /deploys`
+- Очередь — порт `DeployQueue` (абстрактный класс) + BullMQ-реализация (`bullmq`+`ioredis` добавлены). `jobId = deployId` → идемпотентность; exponential backoff, 3 попытки. `parseRedisConnection(REDIS_URL)` отдаёт connection-options (не ioredis-инстанс) — иначе конфликт типов с ioredis, который тянет сам BullMQ. Тесты инжектят фейковую очередь (Redis не нужен).
+- `create()` переиспользует `ValidateBotTokenService.validate` (getMe + single-active-deploy → 422/409), upsert'ит `User` (FK-safety), шифрует оба секрета, пишет `Deploy(pending)` только с `_enc` колонками + `bootstrap_token_hash`. Plaintext bootstrap-токен уезжает **только** в job payload (Redis, internal).
+- Схема: добавлены nullable `llm_base_url` / `llm_model` (для openrouter/custom, где base_url/model приходят от клиента). DTO требует их для `custom`.
+
+### Task 10 — post-install script generator
+- Скрипт **не рендерит** секреты и провайдер-специфику — только тянет одноразовый `BootstrapPayload` и пишет файлы. Значения single-quote-escaped, валидность проверяется `bash -n` в тесте. jq ставится по требованию.
+
+### Task 11 — bootstrap pull (уточнение §6)
+- Бэкенд отдаёт **отрендеренные файлы** `{ env, config_yaml, compose, webhook_secret }`, а не сырые `{ bot_token, llm_key, ... }`. Рендер (`provisioning/hermes-config.ts`, чистые функции по §5/§7) на бэкенде → в bash нет опасного экранирования секретов, compose с `memory: 3G` (KVM 1).
+- IP-проверка — против сохранённого `deploy.vm_ip` (пишет воркер, Task 12), а не живого `getVM` на каждый запрос. `resolveClientIp` берёт первый хоп `X-Forwarded-For` (бэкенд за HTTPS-термином), нормализует `::ffff:` → IPv4.
+- Одноразовость: атомарный `updateMany({where:{id, bootstrap_used_at:null}})` — гонку выигрывает первый. Webhook-секрет генерится здесь, в БД только `webhook_secret_hash` (новая колонка), plaintext уходит в payload для Task 13.
+
