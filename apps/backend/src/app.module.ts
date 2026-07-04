@@ -10,6 +10,7 @@ import { LlmProvidersModule } from './llm-providers/llm-providers.module';
 import { BotModule } from './bot/bot.module';
 import { DeploysModule } from './deploys/deploys.module';
 import { BootstrapModule } from './bootstrap/bootstrap.module';
+import { WorkersModule } from './workers/workers.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { BootstrapModule } from './bootstrap/bootstrap.module';
     BotModule,
     DeploysModule,
     BootstrapModule,
+    WorkersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

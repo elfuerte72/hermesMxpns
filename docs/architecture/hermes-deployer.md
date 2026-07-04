@@ -271,3 +271,10 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - IP-проверка — против сохранённого `deploy.vm_ip` (пишет воркер, Task 12), а не живого `getVM` на каждый запрос. `resolveClientIp` берёт первый хоп `X-Forwarded-For` (бэкенд за HTTPS-термином), нормализует `::ffff:` → IPv4.
 - Одноразовость: атомарный `updateMany({where:{id, bootstrap_used_at:null}})` — гонку выигрывает первый. Webhook-секрет генерится здесь, в БД только `webhook_secret_hash` (новая колонка), plaintext уходит в payload для Task 13.
 
+### Task 12 — deploy worker (BullMQ)
+- Логика вынесена в чистый `DeployProcessor` (юнит-тест с замоканным SDK); тонкий `DeployWorker` (bullmq `Worker`) только дергает его. Env `DEPLOY_WORKER_ENABLED` (default true) — можно поднять API-only ноду.
+- Идемпотентность: атомарный claim `updateMany({where:{status:'pending'}, data:{status:'creating'}})` — повторный/параллельный запуск получает count 0 и выходит. Воркер доводит до `configuring` (VM `running`, `vm_ip` записан); в `ready` переводит webhook от VPS (Task 13).
+- `DRY_RUN=true` → воркер НЕ делает ни одного платного вызова (даже claim), только пишет `dry_run` в лог. Реальный деплой — `DRY_RUN=false` под чекпойнтом. Тариф/템플ейт/DC зашиты константами (`hostingercom-vps-kvm1-usd-1m`, 1121, 11).
+- Поллинг VM: `getVM` каждые 10s до `running` (или `error`/таймаут ~10 мин), `sleep` инжектируемый (тесты — no-op).
+- Fail-path: пишет `error` в лог, удаляет VM (если создан) + post-install script (cleanup-ошибки глотаются, но не мешают), `status=failed`, `DeployNotifier.deployFailed` (пока logging-заглушка, бот-нотификатор — Task 13). Ретраи с backoff — отложены в Task 18; сейчас fail терминален (без re-throw → без повторной покупки). Orphan при краше mid-purchase → reconciliation (Task 17).
+

@@ -1,7 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { BootstrapService } from './bootstrap.service';
 import { SecretsService } from '../secrets/secrets.service';
-import { generateBootstrapToken, hashBootstrapToken } from '../deploys/bootstrap-token';
+import { hashBootstrapToken } from '../deploys/bootstrap-token';
 
 const TEST_KEY = 'b'.repeat(64);
 const TOKEN = 'c'.repeat(64);
