@@ -27,7 +27,11 @@ interface RequestOptions {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    // Skip the ngrok free-tier interstitial when the API is behind a tunnel.
+    'ngrok-skip-browser-warning': 'true',
+  };
   if (opts.auth) headers.Authorization = buildTmaAuthHeader(getInitData());
 
   const res = await fetch(`${API_BASE}${path}`, {
