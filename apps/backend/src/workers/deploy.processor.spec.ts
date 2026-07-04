@@ -154,6 +154,33 @@ describe('DeployProcessor', () => {
     });
   });
 
+  it('retries a transient getVM error during polling instead of failing', async () => {
+    provisioning.getVM
+      .mockRejectedValueOnce({ response: { status: 503 } })
+      .mockResolvedValue(makeVm('running', ['9.9.9.9']));
+
+    await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1', 't');
+
+    expect(provisioning.getVM).toHaveBeenCalledTimes(2);
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { vm_ip: '9.9.9.9' },
+    });
+    expect(notifier.deployFailed).not.toHaveBeenCalled();
+  });
+
+  it('fails (without retrying) on a non-transient getVM error', async () => {
+    provisioning.getVM.mockRejectedValue({ response: { status: 404 } });
+
+    await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1', 't');
+
+    expect(provisioning.getVM).toHaveBeenCalledTimes(1);
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { status: 'failed' },
+    });
+  });
+
   it('cleans up the script and marks failed when purchase fails (no VM yet)', async () => {
     provisioning.purchaseVM.mockRejectedValue(new Error('purchase boom'));
 

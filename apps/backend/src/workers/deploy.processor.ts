@@ -3,6 +3,7 @@ import type { HostingerVirtualMachine } from '@hermes/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from '../provisioning/provisioning.service';
 import { generatePostInstallScript } from '../provisioning/script-generator';
+import { withRetry, type RetryOptions } from '../common/retry';
 import { DeployNotifier } from './deploy-notifier';
 
 // Boundary-fixed provisioning parameters (do not change — see AGENTS.md).
@@ -16,6 +17,10 @@ export interface DeployProcessorConfig {
   dryRun: boolean;
   pollIntervalMs: number;
   pollMaxAttempts: number;
+  /** Retries for transient (429/5xx/network) Hostinger errors. Default 3. */
+  retries?: number;
+  /** Base backoff for those retries. Default 2000ms. */
+  retryBaseDelayMs?: number;
   /** Injectable delay (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -70,7 +75,10 @@ export class DeployProcessor {
         deployId,
         bootstrapToken,
       });
-      const script = await this.provisioning.createPostInstallScript(`hermes-${deployId}`, content);
+      const script = await withRetry(
+        () => this.provisioning.createPostInstallScript(`hermes-${deployId}`, content),
+        this.retryOpts(),
+      );
       scriptId = script.id;
       await this.prisma.deploy.update({
         where: { id: deployId },
@@ -109,12 +117,22 @@ export class DeployProcessor {
   private async waitForVm(vmId: number): Promise<HostingerVirtualMachine> {
     const sleep = this.config.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     for (let attempt = 1; attempt <= this.config.pollMaxAttempts; attempt++) {
-      const vm = await this.provisioning.getVM(vmId);
+      // getVM retries transient (429/5xx/network) errors so a blip doesn't fail
+      // the whole deploy; a non-transient error still propagates.
+      const vm = await withRetry(() => this.provisioning.getVM(vmId), this.retryOpts());
       if (vm.state === 'running') return vm;
       if (vm.state === 'error') throw new Error(`VM ${vmId} entered an error state`);
       if (attempt < this.config.pollMaxAttempts) await sleep(this.config.pollIntervalMs);
     }
     throw new Error(`Timed out waiting for VM ${vmId} to run`);
+  }
+
+  private retryOpts(): RetryOptions {
+    return {
+      retries: this.config.retries ?? 3,
+      baseDelayMs: this.config.retryBaseDelayMs ?? 2000,
+      sleep: this.config.sleep,
+    };
   }
 
   /** Roll back created resources so a failed deploy never leaves an orphan. */
@@ -130,11 +148,13 @@ export class DeployProcessor {
     await this.log(deployId, 'error', 'error', reason);
 
     if (vmId !== undefined) {
-      await this.tryCleanup(deployId, 'cleanup_vm', vmId, () => this.provisioning.deleteVM(vmId));
+      await this.tryCleanup(deployId, 'cleanup_vm', vmId, () =>
+        withRetry(() => this.provisioning.deleteVM(vmId), this.retryOpts()),
+      );
     }
     if (scriptId !== undefined) {
       await this.tryCleanup(deployId, 'cleanup_script', scriptId, () =>
-        this.provisioning.deletePostInstallScript(scriptId),
+        withRetry(() => this.provisioning.deletePostInstallScript(scriptId), this.retryOpts()),
       );
     }
 

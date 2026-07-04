@@ -13,10 +13,14 @@ import { TeardownProcessor } from './teardown.processor';
 import { TeardownWorker } from './teardown.worker';
 import { ReconcileService } from './reconcile.service';
 import { ReconcileScheduler } from './reconcile.scheduler';
+import { StuckDeployService } from './stuck-deploy.service';
+import { StuckDeployScheduler } from './stuck-deploy.scheduler';
 
 /** Poll every 10s for up to ~10 min while the VM comes up. */
 const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_ATTEMPTS = 60;
+/** Fail deploys wedged in creating/configuring past this (> the 10-min poll). */
+const PROVISION_TIMEOUT_MS = 20 * 60 * 1000;
 
 @Module({
   imports: [PrismaModule, ProvisioningModule, NotificationsModule, ScheduleModule.forRoot()],
@@ -84,6 +88,21 @@ const POLL_MAX_ATTEMPTS = 60;
         }),
     },
     ReconcileScheduler,
+    {
+      provide: StuckDeployService,
+      inject: [PrismaService, ProvisioningService, DeployNotifier, ConfigService],
+      useFactory: (
+        prisma: PrismaService,
+        provisioning: ProvisioningService,
+        notifier: DeployNotifier,
+        config: ConfigService,
+      ) =>
+        new StuckDeployService(prisma, provisioning, notifier, {
+          dryRun: config.get<boolean>('DRY_RUN') ?? true,
+          timeoutMs: PROVISION_TIMEOUT_MS,
+        }),
+    },
+    StuckDeployScheduler,
   ],
 })
 export class WorkersModule {}
