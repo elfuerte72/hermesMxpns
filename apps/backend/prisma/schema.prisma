@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DeployStatus {
+  pending
+  creating
+  configuring
+  ready
+  failed
+  deleted
+}
+
+model User {
+  telegram_id BigInt   @id
+  username    String?
+  created_at  DateTime @default(now())
+
+  deploys Deploy[]
+
+  @@map("users")
+}
+
+model Deploy {
+  id                   String       @id @default(cuid())
+  user_id              BigInt
+  agent                String       @default("hermes")
+  bot_token_enc        String
+  bot_username         String
+  llm_provider         String
+  llm_key_enc          String
+  hostinger_vm_id      String?
+  hostinger_script_id  String?
+  status               DeployStatus @default(pending)
+  bootstrap_token_hash String
+  bootstrap_used_at    DateTime?
+  vm_ip                String?
+  paid_until           DateTime?
+  created_at           DateTime     @default(now())
+  updated_at           DateTime     @updatedAt
+
+  user              User              @relation(fields: [user_id], references: [telegram_id], onDelete: Cascade)
+  provisioning_logs ProvisioningLog[]
+
+  @@index([user_id])
+  @@index([status])
+  @@index([bot_username])
+  @@map("deploys")
+}
+
+model ProvisioningLog {
+  id        String   @id @default(cuid())
+  deploy_id String
+  step      String
+  status    String
+  message   String?
+  ts        DateTime @default(now())
+
+  deploy Deploy @relation(fields: [deploy_id], references: [id], onDelete: Cascade)
+
+  @@index([deploy_id])
+  @@map("provisioning_logs")
+}

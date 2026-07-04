@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 build/
+out-tsc/
 *.tsbuildinfo
 .next/
 .turbo/
@@ -38,6 +39,7 @@ coverage/
 # Prisma
 apps/backend/prisma/*.db
 apps/backend/prisma/*.db-journal
+apps/backend/src/generated/
 
 # Frontend
 apps/frontend/dist/

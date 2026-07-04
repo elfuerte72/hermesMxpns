@@ -1,0 +1,7 @@
+dist
+out-tsc
+node_modules
+coverage
+**/*.tsbuildinfo
+package-lock.json
+apps/frontend/dist

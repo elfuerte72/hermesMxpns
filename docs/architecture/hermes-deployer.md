@@ -199,3 +199,25 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - Hermes Agent docs: Context7 `/nousresearch/hermes-agent` (install, docker, telegram.md, providers.md, google-gemini guide)
 - OpenClaw docs (cross-check OpenRouter): Context7 `/openclaw/openclaw` (providers/openrouter.md, channels/telegram.md)
 - Live API queries (catalog, data-centers, templates) через токен оператора — 2026-07-04
+
+## 14. Phase 1 implementation findings (verified 2026-07-04)
+> Дополнения к §2/§3, выявленные при реализации. Sourced, не догадки.
+
+### Prisma 7 (мажорные изменения vs «классического» Prisma 5/6)
+- **Driver adapter обязателен.** `new PrismaClient()` без adapter кидает `P2038`. Используем `@prisma/adapter-pg` (`PrismaPg`) с `connectionString = DATABASE_URL`. `pg` и `@types/pg` тянутся transitively через adapter (отдельно ставить не нужно).
+- **`url` убран из `datasource` в schema.** Connection URL для Migrate живёт в `prisma.config.ts` (`datasource: { url: env<Env>('DATABASE_URL') }`). Файл `apps/backend/prisma.config.ts` грузит root `.env` (walk-up) — `env()` из `prisma/config` НЕ подгружает `.env` сам.
+- **Generator `prisma-client`** (новый), `output = "../src/generated/prisma"` → TS-исходники, импорт `import { PrismaClient } from '../generated/prisma/client'` (нет `index.ts`). Каталог в `.gitignore`. Команды `npx prisma migrate dev` / `npx prisma generate` работают из `apps/backend` (как в AGENTS).
+- `@nestjs/config` `validate` бежит при import-eval `ConfigModule.forRoot` (до тела `main.ts`) → root `.env` грузится side-effect импортом `./env` первым в `main.ts`; в forRoot стоит `ignoreEnvFile: true`.
+
+### hostinger-api-sdk@1.2.1 — gap по deleteVM
+- SDK **не экспортирует** метод удаления VM (в `VPSVirtualMachineApi` нет `deleteVirtualMachine*`). Все DELETE-методы в SDK — для других ресурсов (payment-methods, post-install-scripts, snapshots, PTR, projects).
+- `DELETE /api/vps/v1/virtual-machines/{id}` (§3) существует по openapi.json, но SDK его не генерирует. `ProvisioningService.deleteVM(id)` делает **raw `axios.delete`** на `https://developers.hostinger.com/api/vps/v1/virtual-machines/{id}` с `Authorization: Bearer <token>`.
+- **Требует верификации на реальном деплое** (Checkpoint 3): подтвердить, что endpoint отвечает 2xx и VM действительно удаляется. Если нет — альтернатива: отмена подписки (`BillingSubscriptionsApi` имеет только `disableAutoRenewalV1`, без cancel/delete — тоже требует уточнения у Hostinger).
+
+### Прочее
+- Purchase-ответ (`BillingV1OrderVirtualMachineOrderResource`) содержит `virtual_machine` напрямую → VM id доступен сразу после purchase (не нужно искать через `listVMs`).
+- VM state — поле `state` (enum: running/creating/initial/error/...), у Action — `state` (success/error/delayed/sent/created). «installed» в API нет — воркер (Task 12) должен поллить VM `state`→running и/или actions.
+- Версии стека (актуальные на 2026-07-04): Node 22, NestJS 11, TS 6, Vite 8, React 19 (док говорил 18 — SDK `@telegram-apps/sdk-react` поддерживает 19), Tailwind 4 (CSS-first, `@tailwindcss/vite`), Prisma 7, zod 4, grammY 1.44.
+- TS 6 депрекейтит `moduleResolution: node` (Node10) → CJS-пакеты (backend, shared) используют `ignoreDeprecations: "6.0"`; frontend — `moduleResolution: bundler`.
+- `npm audit`: `@telegram-apps/sdk-react@3.3.9` транзитивно тянет deprecated `@tma.js/*` с уязвимым `valibot` (ReDoS в `EMOJI_REGEX`, GHSA-vqpr-j7v3-hqw9; 9 high). `npm audit fix --force` = breaking downgrade к sdk-react v2. Не блокирует Phase 1 (SDK не используется до Task 5). Переоценить при реализации TMA-auth (Task 5): возможна миграция на `@tma.js/sdk-react` или фикс upstream.
+

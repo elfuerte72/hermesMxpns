@@ -1,0 +1,38 @@
+{
+  "name": "hermes-deployer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One-click Hermes Agent deployer via Telegram Mini App",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @hermes/shared && npm run build --workspace @hermes/backend && npm run build --workspace @hermes/frontend",
+    "build:shared": "npm run build --workspace @hermes/shared",
+    "build:backend": "npm run build --workspace @hermes/backend",
+    "build:frontend": "npm run build --workspace @hermes/frontend",
+    "dev": "npm run build --workspace @hermes/shared && concurrently -n shared,backend,frontend -c green,blue,magenta \"npm:dev:shared\" \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:shared": "npm run dev --workspace @hermes/shared",
+    "dev:backend": "npm run dev --workspace @hermes/backend",
+    "dev:frontend": "npm run dev --workspace @hermes/frontend",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}\"",
+    "typecheck": "tsc -p packages/shared/tsconfig.json && tsc --noEmit -p apps/backend/tsconfig.json && tsc --noEmit -p apps/frontend/tsconfig.json",
+    "test": "npm test --workspace @hermes/backend --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.3",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
