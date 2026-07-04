@@ -276,5 +276,11 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - Идемпотентность: атомарный claim `updateMany({where:{status:'pending'}, data:{status:'creating'}})` — повторный/параллельный запуск получает count 0 и выходит. Воркер доводит до `configuring` (VM `running`, `vm_ip` записан); в `ready` переводит webhook от VPS (Task 13).
 - `DRY_RUN=true` → воркер НЕ делает ни одного платного вызова (даже claim), только пишет `dry_run` в лог. Реальный деплой — `DRY_RUN=false` под чекпойнтом. Тариф/템플ейт/DC зашиты константами (`hostingercom-vps-kvm1-usd-1m`, 1121, 11).
 - Поллинг VM: `getVM` каждые 10s до `running` (или `error`/таймаут ~10 мин), `sleep` инжектируемый (тесты — no-op).
-- Fail-path: пишет `error` в лог, удаляет VM (если создан) + post-install script (cleanup-ошибки глотаются, но не мешают), `status=failed`, `DeployNotifier.deployFailed` (пока logging-заглушка, бот-нотификатор — Task 13). Ретраи с backoff — отложены в Task 18; сейчас fail терминален (без re-throw → без повторной покупки). Orphan при краше mid-purchase → reconciliation (Task 17).
+- Fail-path: пишет `error` в лог, удаляет VM (если создан) + post-install script (cleanup-ошибки глотаются, но не мешают), `status=failed`, `DeployNotifier.deployFailed`. Ретраи с backoff — отложены в Task 18; сейчас fail терминален (без re-throw → без повторной покупки). Orphan при краше mid-purchase → reconciliation (Task 17).
+
+### Task 13 — webhook /deploy-ready + нотификатор
+- `POST /webhooks/deploy-ready` (без TmaAuthGuard — auth = Bearer webhook-секрет). Проверка подписи: `bootstrapTokenMatches(secret, webhook_secret_hash)` (тот же constant-time hash-compare). Невалид/нет deploy/нет секрета → 404.
+- Переход `creating|configuring → ready` через guarded `updateMany`; повтор для `ready` → идемпотентно 200; терминальный не-ready (failed/deleted) → 404. Гигиена: `deletePostInstallScript(hostinger_script_id)` best-effort (скип под DRY_RUN), нотификация клиенту.
+- `DeployNotifier` — общий порт (`workers/deploy-notifier.ts`), бот-реализация `notifications/BotDeployNotifier` (DM через `BotService.sendMessage`, no-op если `BOT_TOKEN` пуст). `NotificationsModule` провайдит его для воркера и вебхука.
+- **Итог Phase 3:** 27 suites / 146 тестов зелёные; DI-граф и роуты (`/deploys`, `/bootstrap/:id`, `/webhooks/deploy-ready`) проверены smoke-бутом. Реальный деплой (`DRY_RUN=false`) — под чекпойнтом с человеком.
 

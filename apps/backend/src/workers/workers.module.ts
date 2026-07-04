@@ -4,7 +4,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
 import { ProvisioningService } from '../provisioning/provisioning.service';
-import { DeployNotifier, LoggingDeployNotifier } from './deploy-notifier';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { DeployNotifier } from './deploy-notifier';
 import { DeployProcessor } from './deploy.processor';
 import { DeployWorker } from './deploy.worker';
 
@@ -13,9 +14,8 @@ const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_ATTEMPTS = 60;
 
 @Module({
-  imports: [PrismaModule, ProvisioningModule],
+  imports: [PrismaModule, ProvisioningModule, NotificationsModule],
   providers: [
-    { provide: DeployNotifier, useClass: LoggingDeployNotifier },
     {
       provide: DeployProcessor,
       inject: [PrismaService, ProvisioningService, DeployNotifier, ConfigService],
@@ -43,6 +43,5 @@ const POLL_MAX_ATTEMPTS = 60;
         ),
     },
   ],
-  exports: [DeployNotifier],
 })
 export class WorkersModule {}

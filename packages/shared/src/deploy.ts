@@ -46,6 +46,15 @@ export interface BootstrapPayload {
   webhook_secret: string;
 }
 
+/** Body the VPS POSTs to /webhooks/deploy-ready (auth via Bearer webhook_secret). */
+export interface DeployReadyRequest {
+  deploy_id: string;
+}
+
+export interface DeployReadyResponse {
+  status: DeployStatus;
+}
+
 /** Public projection of a Deploy — never carries secrets. */
 export interface DeployView {
   id: string;

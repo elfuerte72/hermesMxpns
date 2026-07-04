@@ -11,6 +11,7 @@ import { BotModule } from './bot/bot.module';
 import { DeploysModule } from './deploys/deploys.module';
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { WorkersModule } from './workers/workers.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { WorkersModule } from './workers/workers.module';
     DeploysModule,
     BootstrapModule,
     WorkersModule,
+    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [AppService],

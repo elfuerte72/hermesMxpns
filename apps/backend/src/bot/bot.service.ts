@@ -19,6 +19,15 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     return this.bot?.token ?? null;
   }
 
+  /** Send a DM to a chat. No-op (logged) when the entry bot is disabled. */
+  async sendMessage(chatId: string | bigint, text: string): Promise<void> {
+    if (!this.bot) {
+      this.logger.warn(`Entry bot disabled — dropping message to ${chatId}`);
+      return;
+    }
+    await this.bot.api.sendMessage(chatId.toString(), text);
+  }
+
   getWebhookHandler(): WebhookHandler | null {
     return this.webhookHandler;
   }
