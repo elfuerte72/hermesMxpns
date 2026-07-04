@@ -7,3 +7,4 @@ export * from './hostinger';
 export * from './llm';
 export * from './auth';
 export * from './api';
+export * from './deploy';
