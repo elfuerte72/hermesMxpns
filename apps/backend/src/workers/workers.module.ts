@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
@@ -10,13 +11,15 @@ import { DeployProcessor } from './deploy.processor';
 import { DeployWorker } from './deploy.worker';
 import { TeardownProcessor } from './teardown.processor';
 import { TeardownWorker } from './teardown.worker';
+import { ReconcileService } from './reconcile.service';
+import { ReconcileScheduler } from './reconcile.scheduler';
 
 /** Poll every 10s for up to ~10 min while the VM comes up. */
 const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_ATTEMPTS = 60;
 
 @Module({
-  imports: [PrismaModule, ProvisioningModule, NotificationsModule],
+  imports: [PrismaModule, ProvisioningModule, NotificationsModule, ScheduleModule.forRoot()],
   providers: [
     {
       provide: DeployProcessor,
@@ -67,6 +70,20 @@ const POLL_MAX_ATTEMPTS = 60;
           config.get<boolean>('DEPLOY_WORKER_ENABLED') ?? true,
         ),
     },
+    {
+      provide: ReconcileService,
+      inject: [PrismaService, ProvisioningService, ConfigService],
+      useFactory: (
+        prisma: PrismaService,
+        provisioning: ProvisioningService,
+        config: ConfigService,
+      ) =>
+        new ReconcileService(prisma, provisioning, {
+          dryRun: config.get<boolean>('DRY_RUN') ?? true,
+          deleteOrphans: config.get<boolean>('RECONCILE_DELETE_ORPHANS') ?? false,
+        }),
+    },
+    ReconcileScheduler,
   ],
 })
 export class WorkersModule {}
