@@ -1,4 +1,4 @@
-import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { AuthenticatedUser } from '@hermes/shared';
 import { DeploysService } from './deploys.service';
 import { SecretsService } from '../secrets/secrets.service';
@@ -13,7 +13,7 @@ const TEST_KEY = 'a'.repeat(64);
 describe('DeploysService', () => {
   let prisma: {
     user: { upsert: jest.Mock };
-    deploy: { create: jest.Mock };
+    deploy: { create: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
   };
   let secrets: SecretsService;
   let validateBotToken: { validate: jest.Mock };
@@ -23,7 +23,11 @@ describe('DeploysService', () => {
   beforeEach(() => {
     prisma = {
       user: { upsert: jest.fn().mockResolvedValue(undefined) },
-      deploy: { create: jest.fn().mockResolvedValue({ id: 'deploy-1' }) },
+      deploy: {
+        create: jest.fn().mockResolvedValue({ id: 'deploy-1' }),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
     };
     secrets = new SecretsService(TEST_KEY);
     validateBotToken = { validate: jest.fn().mockResolvedValue({ username: 'mybot', id: 7 }) };
@@ -120,5 +124,65 @@ describe('DeploysService', () => {
     await expect(service.create(USER, DTO)).rejects.toBeInstanceOf(ConflictException);
     expect(prisma.deploy.create).not.toHaveBeenCalled();
     expect(queue.enqueueDeploy).not.toHaveBeenCalled();
+  });
+
+  const dbRow = {
+    id: 'deploy-1',
+    agent: 'hermes',
+    bot_username: 'mybot',
+    llm_provider: 'groq',
+    status: 'ready',
+    vm_ip: '1.2.3.4',
+    created_at: new Date('2026-07-04T10:00:00Z'),
+    updated_at: new Date('2026-07-04T10:05:00Z'),
+    // Secret columns that must NOT appear in the view:
+    bot_token_enc: 'v1:secret',
+    llm_key_enc: 'v1:secret',
+    bootstrap_token_hash: 'hash',
+    user_id: 12345n,
+  };
+
+  it('lists the caller deploys as secret-free views', async () => {
+    prisma.deploy.findMany.mockResolvedValue([dbRow]);
+
+    const views = await service.list(USER);
+
+    expect(prisma.deploy.findMany).toHaveBeenCalledWith({
+      where: { user_id: 12345n },
+      orderBy: { created_at: 'desc' },
+    });
+    expect(views).toEqual([
+      {
+        id: 'deploy-1',
+        agent: 'hermes',
+        bot_username: 'mybot',
+        llm_provider: 'groq',
+        status: 'ready',
+        vm_ip: '1.2.3.4',
+        created_at: '2026-07-04T10:00:00.000Z',
+        updated_at: '2026-07-04T10:05:00.000Z',
+      },
+    ]);
+    // No secret keys leak into the view.
+    const serialized = JSON.stringify(views);
+    expect(serialized).not.toContain('bot_token_enc');
+    expect(serialized).not.toContain('secret');
+  });
+
+  it('returns a single owned deploy view', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(dbRow);
+    const view = await service.getById(USER, 'deploy-1');
+    expect(view.id).toBe('deploy-1');
+    expect(view).not.toHaveProperty('bot_token_enc');
+  });
+
+  it('404s when the deploy does not exist', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(null);
+    await expect(service.getById(USER, 'missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('404s when the deploy belongs to another user', async () => {
+    prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, user_id: 99999n });
+    await expect(service.getById(USER, 'deploy-1')).rejects.toBeInstanceOf(NotFoundException);
   });
 });

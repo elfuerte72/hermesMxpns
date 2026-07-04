@@ -1,5 +1,15 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards, UsePipes } from '@nestjs/common';
-import type { AuthenticatedUser, CreateDeployResponse } from '@hermes/shared';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  UseGuards,
+  UsePipes,
+} from '@nestjs/common';
+import type { AuthenticatedUser, CreateDeployResponse, DeployView } from '@hermes/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { TmaAuthGuard } from '../auth/tma-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -19,5 +29,18 @@ export class DeploysController {
     @Body() dto: CreateDeployDto,
   ): Promise<CreateDeployResponse> {
     return this.deploysService.create(user, dto);
+  }
+
+  @Get()
+  list(@CurrentUser() user: AuthenticatedUser): Promise<DeployView[]> {
+    return this.deploysService.list(user);
+  }
+
+  @Get(':id')
+  getById(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<DeployView> {
+    return this.deploysService.getById(user, id);
   }
 }

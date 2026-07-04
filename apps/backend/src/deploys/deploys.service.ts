@@ -1,5 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import type { AuthenticatedUser, CreateDeployResponse } from '@hermes/shared';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type {
+  AuthenticatedUser,
+  CreateDeployResponse,
+  DeployStatus,
+  DeployView,
+} from '@hermes/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretsService } from '../secrets/secrets.service';
 import { ValidateBotTokenService } from './validate-bot-token.service';
@@ -53,4 +58,47 @@ export class DeploysService {
 
     return { deploy_id: deploy.id, status: 'pending' };
   }
+
+  /** List the caller's deploys, newest first. Never returns secrets. */
+  async list(user: AuthenticatedUser): Promise<DeployView[]> {
+    const rows = await this.prisma.deploy.findMany({
+      where: { user_id: BigInt(user.telegram_id) },
+      orderBy: { created_at: 'desc' },
+    });
+    return rows.map(toDeployView);
+  }
+
+  /** Fetch one of the caller's deploys. 404 if missing or not owned. */
+  async getById(user: AuthenticatedUser, id: string): Promise<DeployView> {
+    const row = await this.prisma.deploy.findUnique({ where: { id } });
+    if (!row || row.user_id !== BigInt(user.telegram_id)) {
+      throw new NotFoundException('Deploy not found');
+    }
+    return toDeployView(row);
+  }
+}
+
+interface DeployRow {
+  id: string;
+  agent: string;
+  bot_username: string;
+  llm_provider: string;
+  status: string;
+  vm_ip: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/** Project a Deploy row to its public, secret-free view. */
+function toDeployView(d: DeployRow): DeployView {
+  return {
+    id: d.id,
+    agent: d.agent,
+    bot_username: d.bot_username,
+    llm_provider: d.llm_provider,
+    status: d.status as DeployStatus,
+    vm_ip: d.vm_ip,
+    created_at: d.created_at.toISOString(),
+    updated_at: d.updated_at.toISOString(),
+  };
 }
