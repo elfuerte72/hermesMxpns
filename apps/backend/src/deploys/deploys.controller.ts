@@ -8,7 +8,6 @@ import {
   Param,
   Post,
   UseGuards,
-  UsePipes,
 } from '@nestjs/common';
 import type { AuthenticatedUser, CreateDeployResponse, DeployView } from '@hermes/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -24,10 +23,9 @@ export class DeploysController {
 
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)
-  @UsePipes(new ZodValidationPipe(createDeploySchema))
   create(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CreateDeployDto,
+    @Body(new ZodValidationPipe(createDeploySchema)) dto: CreateDeployDto,
   ): Promise<CreateDeployResponse> {
     return this.deploysService.create(user, dto);
   }
