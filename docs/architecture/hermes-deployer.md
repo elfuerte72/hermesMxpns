@@ -284,3 +284,9 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - `DeployNotifier` — общий порт (`workers/deploy-notifier.ts`), бот-реализация `notifications/BotDeployNotifier` (DM через `BotService.sendMessage`, no-op если `BOT_TOKEN` пуст). `NotificationsModule` провайдит его для воркера и вебхука.
 - **Итог Phase 3:** 27 suites / 146 тестов зелёные; DI-граф и роуты (`/deploys`, `/bootstrap/:id`, `/webhooks/deploy-ready`) проверены smoke-бутом. Реальный деплой (`DRY_RUN=false`) — под чекпойнтом с человеком.
 
+## 17. Phase 4 implementation findings (Tasks 14–15 + read API)
+- Бэкенд: `GET /deploys` и `GET /deploys/:id` (owner-scoped, `toDeployView` — только публичные поля, без `_enc`/хешей). 404 если чужой/нет.
+- Frontend (`apps/frontend/src`): вместо `@telegram-apps/sdk-react` (у него уязвимые транзитивы, см. §14) — тонкий мост `telegram.ts` над `window.Telegram.WebApp` (raw initData → `Authorization: tma <initData>`; dev-fallback `VITE_DEV_INIT_DATA`). Скрипт `telegram-web-app.js` подключён в `index.html`.
+- `api.ts` — fetch-обёртка (`VITE_API_URL` base, `ApiError` со статусом/сообщением). `DeployForm` (валидация bot-token → username, custom-провайдер даёт base_url+model), `DeployStatusView` (поллинг `GET /deploys/:id` каждые 3с, стоп на terminal, ready→`t.me/<bot>`, failed→reset). Секреты в UI не хранятся после ввода; статус тянет `DeployView` без секретов.
+- Тестирование фронта: **vitest** (jsdom) добавлен — 15 тестов на чистую логику (api-клиент с моком fetch, telegram-мост, статус-хелперы). Корневой `npm test` теперь гоняет backend (jest) + frontend (vitest). Итог Phase 4: 152 backend + 15 frontend тестов зелёные, `npm run build` собирает TMA (~200KB/63KB gzip).
+

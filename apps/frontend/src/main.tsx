@@ -1,7 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { initTelegram } from './telegram';
 import './index.css';
+
+initTelegram();
 
 const root = document.getElementById('root');
 if (!root) {

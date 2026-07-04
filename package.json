@@ -20,7 +20,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}\"",
     "typecheck": "tsc -p packages/shared/tsconfig.json && tsc --noEmit -p apps/backend/tsconfig.json && tsc --noEmit -p apps/frontend/tsconfig.json",
-    "test": "npm test --workspace @hermes/backend --if-present"
+    "test": "npm test --workspace @hermes/backend --if-present && npm test --workspace @hermes/frontend --if-present"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
