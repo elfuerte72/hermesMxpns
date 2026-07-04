@@ -30,6 +30,22 @@ export interface CreateDeployResponse {
   status: DeployStatus;
 }
 
+/**
+ * One-time payload the VPS pulls from `GET /bootstrap/:id?token=`. The backend
+ * renders the three Hermes files server-side so no secrets ever live in the
+ * account-visible post-install script.
+ */
+export interface BootstrapPayload {
+  /** Full contents of ~/.hermes/.env (bot token, allowed users, LLM key). */
+  env: string;
+  /** Full contents of ~/.hermes/config.yaml (provider base_url + model). */
+  config_yaml: string;
+  /** Full contents of ~/.hermes/docker-compose.yml. */
+  compose: string;
+  /** One-time secret the VPS echoes back to POST /webhooks/deploy-ready. */
+  webhook_secret: string;
+}
+
 /** Public projection of a Deploy — never carries secrets. */
 export interface DeployView {
   id: string;
