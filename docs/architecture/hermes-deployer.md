@@ -221,3 +221,37 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - TS 6 депрекейтит `moduleResolution: node` (Node10) → CJS-пакеты (backend, shared) используют `ignoreDeprecations: "6.0"`; frontend — `moduleResolution: bundler`.
 - `npm audit`: `@telegram-apps/sdk-react@3.3.9` транзитивно тянет deprecated `@tma.js/*` с уязвимым `valibot` (ReDoS в `EMOJI_REGEX`, GHSA-vqpr-j7v3-hqw9; 9 high). `npm audit fix --force` = breaking downgrade к sdk-react v2. Не блокирует Phase 1 (SDK не используется до Task 5). Переоценить при реализации TMA-auth (Task 5): возможна миграция на `@tma.js/sdk-react` или фикс upstream.
 
+## 15. Phase 2 implementation findings (verified 2026-07-04)
+> Sourced-факты, выявленные при реализации Tasks 5–8.
+
+### TMA initData validation (Task 5) — алгоритм из официальных доков
+**Source:** https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app (Bot API 9.6, 2026-04-03).
+- `initData` — это query string (URL-encoded). Валидация HMAC-SHA256:
+  1. Распарсить `initData` через `URLSearchParams` (значения URL-decoded).
+  2. Достать `hash`; убрать его из набора параметров.
+  3. `data_check_string` = все остальные поля, отсортированные по ключу alphabetically, в формате `key=value`, разделённые `\n` (0x0A). **Значения — decoded** (то, что вернул `URLSearchParams.get`).
+  4. `secret_key = HMAC_SHA256(key="WebAppData", message=<bot_token>)`.
+  5. `computed_hash = hex(HMAC_SHA256(key=secret_key, message=data_check_string))`.
+  6. `computed_hash === hash` → данные от Telegram.
+- `auth_date` — Unix-секунды; опциональная freshness-проверка (`now - auth_date <= max_age`). Реализовано через env `TMA_AUTH_MAX_AGE_SECONDS` (дефолт 86400 = 24ч).
+- `user` — JSON-serialized `WebAppUser`; `id` — до 52 значащих бит → храним как `BigInt` (Prisma `telegram_id BigInt`). `signature` (поле для third-party Ed25519-валидации) присутствует в реальном initData и **входит** в `data_check_string` (исключается только `hash`).
+- Реализация: `apps/backend/src/auth/tma-validation.ts` (pure functions, без NestJS-зависимостей — легко тестировать); `buildInitData()` хелпер для тестов генерирует валидную строку.
+- Auth-контракт: фронт шлёт `Authorization: tma <initData>` на защищённые эндпойнты; `TmaAuthGuard` (NestJS `CanActivate`) валидирует подпись + freshness, кладёт user в `request.tmaUser`. Stateless — без JWT/сессий, initData ре-валидируется на каждом запросе (HMAC дёшево). `POST /auth/validate-init` — отдельно (initData в body), upsert'ит `User`.
+- DTO-валидация: кастомный `ZodValidationPipe` (zod уже в deps) вместо class-validator — консистентно с `env.schema.ts`.
+
+### grammY 1.44 (Task 6) — entry bot
+**Source:** grammY docs (Context7 `/websites/grammy_dev`, репутация High).
+- `InlineKeyboard.webApp(text, url)` → кнопка с `web_app: { url }` (открывает Mini App). Проверено по `node_modules/grammy/out/convenience/keyboard.d.ts:576`.
+- Транспорт через env `BOT_USE_WEBHOOK` (default `false` = long polling): `false` → `bot.start()`; `true` → `bot.api.setWebhook(${BACKEND_URL}/bot/${BOT_TOKEN})` + `webhookCallback(bot, 'express')` на `POST /bot/:secret` (secret = BOT_TOKEN). Webhook-path-with-token — рекомендация grammY (Telegram шлёт только на этот секретный путь).
+- ⚠️ `webhookCallback(bot, ...)` вызывает `bot.isRunning()` и **перезаписывает `bot.start`** (кидает, если вызвать после webhook-setup). Тесты должны захватывать ссылку на `bot.start` до `onModuleInit`, а мок-бот должен иметь `isRunning: () => false`.
+- Пустой `BOT_TOKEN` → `BotService` no-op (WARN-лог), приложение стартует. Реальный entry-бот ещё не создан (TODO в `.env`).
+- `@types/express` добавлен в devDeps (нужен для типов `Request`/`Response` в `BotController` вебхука).
+
+### validate-bot-token (Task 8)
+- Прокси к Telegram `GET https://api.telegram.org/bot<token>/getMe` через `axios`. Невалидный токен → Telegram 401 → axios rejects → `422 UnprocessableEntityException`. `ok:false` / не-бот → тоже 422.
+- Уникальность: токены зашифрованы в БД (`bot_token_enc`), ищем по `bot_username` (уникально идентифицирует бота). Блокируем только активные деплои (`status in pending/creating/configuring/ready`); `failed`/`deleted` не блокируют повторный деплой. Конфликт → `409 ConflictException`.
+- Эндпойнт под `TmaAuthGuard` (auth-контекст Task 5).
+
+### Прочее (Phase 2)
+- Полная статистика Phase 2: 13 test suites, 72 теста (было 23 в Phase 1). `npm run build`/`lint`/`typecheck` зелёные. Smoke-тест: валидный initData → 200 + upsert в Postgres, tampered hash → 401, `validate-bot-token` под валидным TMA-auth → 422 (фейк-токен).
+

@@ -7,6 +7,10 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url(),
   HOSTINGER_API_TOKEN: z.string().min(1),
   BOT_TOKEN: z.string().default(''),
+  BOT_USE_WEBHOOK: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   ENCRYPTION_KEY: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be 64 hex chars (32 bytes)'),

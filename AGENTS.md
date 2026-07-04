@@ -49,6 +49,8 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hermes_deployer
 REDIS_URL=redis://localhost:6379
 HOSTINGER_API_TOKEN=<в .env>           # оператора, не коммитить
 BOT_TOKEN=<твой Telegram-бот-токен>     # entry-бота, получить у @BotFather
+BOT_USE_WEBHOOK=false                   # false=long polling (dev), true=webhook (prod)
+TMA_AUTH_MAX_AGE_SECONDS=86400          # freshness-окно Telegram initData (24h)
 ENCRYPTION_KEY=<32-byte hex>            # для AES-GCM, сгенерировать
 BACKEND_URL=https://<публичный-домен>   # для webhook'ов и bootstrap-pull
 MINI_APP_URL=https://<домен-mini-app>

@@ -5,9 +5,22 @@ import { ConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProvisioningModule } from './provisioning/provisioning.module';
 import { SecretsModule } from './secrets/secrets.module';
+import { AuthModule } from './auth/auth.module';
+import { LlmProvidersModule } from './llm-providers/llm-providers.module';
+import { BotModule } from './bot/bot.module';
+import { DeploysModule } from './deploys/deploys.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, SecretsModule, ProvisioningModule],
+  imports: [
+    ConfigModule,
+    PrismaModule,
+    SecretsModule,
+    ProvisioningModule,
+    AuthModule,
+    LlmProvidersModule,
+    BotModule,
+    DeploysModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
