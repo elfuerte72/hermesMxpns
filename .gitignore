@@ -43,3 +43,6 @@ apps/backend/src/generated/
 
 # Frontend
 apps/frontend/dist/
+
+# Playwright MCP artifacts
+.playwright-mcp/
