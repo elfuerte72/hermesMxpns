@@ -24,4 +24,11 @@ describe('BotDeployNotifier', () => {
     expect(chatId).toBe(77n);
     expect(text).toContain('boom');
   });
+
+  it('DMs the client when the deploy is deleted', async () => {
+    await notifier.deployDeleted(77n, 'coolbot');
+    const [chatId, text] = bot.sendMessage.mock.calls[0];
+    expect(chatId).toBe(77n);
+    expect(text).toContain('@coolbot');
+  });
 });

@@ -8,6 +8,7 @@ import { Logger } from '@nestjs/common';
 export abstract class DeployNotifier {
   abstract deployFailed(telegramId: bigint, reason: string): Promise<void>;
   abstract deployReady(telegramId: bigint, botUsername: string): Promise<void>;
+  abstract deployDeleted(telegramId: bigint, botUsername: string): Promise<void>;
 }
 
 /** Logs only — used as a fallback and in tests. */
@@ -21,6 +22,11 @@ export class LoggingDeployNotifier extends DeployNotifier {
 
   deployReady(telegramId: bigint, botUsername: string): Promise<void> {
     this.logger.log(`deploy ready for user ${telegramId}: @${botUsername}`);
+    return Promise.resolve();
+  }
+
+  deployDeleted(telegramId: bigint, botUsername: string): Promise<void> {
+    this.logger.log(`deploy deleted for user ${telegramId}: @${botUsername}`);
     return Promise.resolve();
   }
 }

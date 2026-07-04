@@ -18,6 +18,7 @@ describe('DeploysService', () => {
   let secrets: SecretsService;
   let validateBotToken: { validate: jest.Mock };
   let queue: { enqueueDeploy: jest.Mock };
+  let teardownQueue: { enqueueTeardown: jest.Mock };
   let service: DeploysService;
 
   beforeEach(() => {
@@ -32,11 +33,13 @@ describe('DeploysService', () => {
     secrets = new SecretsService(TEST_KEY);
     validateBotToken = { validate: jest.fn().mockResolvedValue({ username: 'mybot', id: 7 }) };
     queue = { enqueueDeploy: jest.fn().mockResolvedValue(undefined) };
+    teardownQueue = { enqueueTeardown: jest.fn().mockResolvedValue(undefined) };
     service = new DeploysService(
       prisma as never,
       secrets,
       validateBotToken as never,
       queue as never,
+      teardownQueue as never,
     );
   });
 
@@ -184,5 +187,26 @@ describe('DeploysService', () => {
   it('404s when the deploy belongs to another user', async () => {
     prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, user_id: 99999n });
     await expect(service.getById(USER, 'deploy-1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('enqueues a teardown job for an owned, non-deleted deploy', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(dbRow);
+    const view = await service.requestTeardown(USER, 'deploy-1');
+    expect(teardownQueue.enqueueTeardown).toHaveBeenCalledWith({ deployId: 'deploy-1' });
+    expect(view.id).toBe('deploy-1');
+  });
+
+  it('does not enqueue teardown for an already-deleted deploy (idempotent)', async () => {
+    prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, status: 'deleted' });
+    await service.requestTeardown(USER, 'deploy-1');
+    expect(teardownQueue.enqueueTeardown).not.toHaveBeenCalled();
+  });
+
+  it('404s teardown for a deploy owned by another user', async () => {
+    prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, user_id: 99999n });
+    await expect(service.requestTeardown(USER, 'deploy-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(teardownQueue.enqueueTeardown).not.toHaveBeenCalled();
   });
 });

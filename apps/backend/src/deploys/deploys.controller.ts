@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -42,5 +43,14 @@ export class DeploysController {
     @Param('id') id: string,
   ): Promise<DeployView> {
     return this.deploysService.getById(user, id);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.ACCEPTED)
+  teardown(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<DeployView> {
+    return this.deploysService.requestTeardown(user, id);
   }
 }

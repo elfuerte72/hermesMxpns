@@ -10,6 +10,7 @@ import { TELEGRAM_API_BASE, ValidateBotTokenService } from './validate-bot-token
 import { DeploysController } from './deploys.controller';
 import { DeploysService } from './deploys.service';
 import { BullDeployQueue, DeployQueue } from './deploy-queue';
+import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
 
 @Module({
   imports: [PrismaModule, AuthModule, SecretsModule],
@@ -27,14 +28,21 @@ import { BullDeployQueue, DeployQueue } from './deploy-queue';
         new BullDeployQueue(config.getOrThrow<string>('REDIS_URL')),
     },
     {
+      provide: TeardownQueue,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        new BullTeardownQueue(config.getOrThrow<string>('REDIS_URL')),
+    },
+    {
       provide: DeploysService,
-      inject: [PrismaService, SecretsService, ValidateBotTokenService, DeployQueue],
+      inject: [PrismaService, SecretsService, ValidateBotTokenService, DeployQueue, TeardownQueue],
       useFactory: (
         prisma: PrismaService,
         secrets: SecretsService,
         validateBotToken: ValidateBotTokenService,
         queue: DeployQueue,
-      ) => new DeploysService(prisma, secrets, validateBotToken, queue),
+        teardownQueue: TeardownQueue,
+      ) => new DeploysService(prisma, secrets, validateBotToken, queue, teardownQueue),
     },
   ],
 })

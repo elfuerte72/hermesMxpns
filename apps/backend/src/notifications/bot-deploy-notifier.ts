@@ -20,4 +20,11 @@ export class BotDeployNotifier extends DeployNotifier {
       `✅ Готово! Ваш Hermes-агент развёрнут.\nНапишите боту @${botUsername}, чтобы начать общение.`,
     );
   }
+
+  async deployDeleted(telegramId: bigint, botUsername: string): Promise<void> {
+    await this.bot.sendMessage(
+      telegramId,
+      `🗑 Агент @${botUsername} удалён, сервер остановлен. Спасибо, что пользовались!`,
+    );
+  }
 }

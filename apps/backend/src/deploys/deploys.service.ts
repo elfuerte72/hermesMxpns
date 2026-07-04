@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SecretsService } from '../secrets/secrets.service';
 import { ValidateBotTokenService } from './validate-bot-token.service';
 import { DeployQueue } from './deploy-queue';
+import { TeardownQueue } from './teardown-queue';
 import { generateBootstrapToken } from './bootstrap-token';
 import type { CreateDeployDto } from './create-deploy.dto';
 
@@ -21,6 +22,7 @@ export class DeploysService {
     private readonly secrets: SecretsService,
     private readonly validateBotToken: ValidateBotTokenService,
     private readonly queue: DeployQueue,
+    private readonly teardownQueue: TeardownQueue,
   ) {}
 
   async create(user: AuthenticatedUser, dto: CreateDeployDto): Promise<CreateDeployResponse> {
@@ -73,6 +75,19 @@ export class DeploysService {
     const row = await this.prisma.deploy.findUnique({ where: { id } });
     if (!row || row.user_id !== BigInt(user.telegram_id)) {
       throw new NotFoundException('Deploy not found');
+    }
+    return toDeployView(row);
+  }
+
+  /** Request teardown of an owned deploy. Idempotent; enqueues unless deleted. */
+  async requestTeardown(user: AuthenticatedUser, id: string): Promise<DeployView> {
+    const row = await this.prisma.deploy.findUnique({ where: { id } });
+    if (!row || row.user_id !== BigInt(user.telegram_id)) {
+      throw new NotFoundException('Deploy not found');
+    }
+    if (row.status !== 'deleted') {
+      await this.teardownQueue.enqueueTeardown({ deployId: id });
+      this.logger.log(`Teardown requested for deploy ${id}`);
     }
     return toDeployView(row);
   }

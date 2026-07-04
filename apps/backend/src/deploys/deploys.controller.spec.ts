@@ -5,10 +5,20 @@ import type { CreateDeployDto } from './create-deploy.dto';
 
 describe('DeploysController', () => {
   let controller: DeploysController;
-  let service: { create: jest.Mock; list: jest.Mock; getById: jest.Mock };
+  let service: {
+    create: jest.Mock;
+    list: jest.Mock;
+    getById: jest.Mock;
+    requestTeardown: jest.Mock;
+  };
 
   beforeEach(() => {
-    service = { create: jest.fn(), list: jest.fn(), getById: jest.fn() };
+    service = {
+      create: jest.fn(),
+      list: jest.fn(),
+      getById: jest.fn(),
+      requestTeardown: jest.fn(),
+    };
     controller = new DeploysController(service as unknown as DeploysService);
   });
 
@@ -37,5 +47,13 @@ describe('DeploysController', () => {
     const result = await controller.getById(user, 'd-1');
     expect(service.getById).toHaveBeenCalledWith(user, 'd-1');
     expect(result).toEqual({ id: 'd-1' });
+  });
+
+  it('DELETE /deploys/:id delegates to requestTeardown', async () => {
+    const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
+    service.requestTeardown.mockResolvedValue({ id: 'd-1', status: 'ready' });
+    const result = await controller.teardown(user, 'd-1');
+    expect(service.requestTeardown).toHaveBeenCalledWith(user, 'd-1');
+    expect(result).toEqual({ id: 'd-1', status: 'ready' });
   });
 });
