@@ -11,6 +11,8 @@ export const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  TMA_AUTH_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86400),
+  SERVE_FRONTEND_DIR: z.string().min(1).optional(),
   ENCRYPTION_KEY: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be 64 hex chars (32 bytes)'),

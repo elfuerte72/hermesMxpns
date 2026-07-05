@@ -18,6 +18,13 @@ describe('env schema', () => {
     expect(env.DRY_RUN).toBe(true);
     expect(env.PORT).toBe(3000);
     expect(env.BOT_TOKEN).toBe('');
+    expect(env.TMA_AUTH_MAX_AGE_SECONDS).toBe(86400);
+    expect(env.SERVE_FRONTEND_DIR).toBeUndefined();
+  });
+
+  it('coerces TMA_AUTH_MAX_AGE_SECONDS to a number', () => {
+    const env = validateEnv({ ...valid, TMA_AUTH_MAX_AGE_SECONDS: '3600' });
+    expect(env.TMA_AUTH_MAX_AGE_SECONDS).toBe(3600);
   });
 
   it('throws when a required var is missing (HOSTINGER_API_TOKEN)', () => {
