@@ -269,13 +269,47 @@ describe('DeployProcessor', () => {
     await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1');
 
     expect(provisioning.purchaseVM).toHaveBeenCalledTimes(1);
-    expect(provisioning.listVMs).not.toHaveBeenCalled();
+    expect(provisioning.listVMs).toHaveBeenCalledTimes(1);
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
     });
     expect(notifier.deployFailed).toHaveBeenCalledWith(42n, expect.any(String));
+  });
+
+  it('reuses a pre-existing paid running VM instead of purchasing (self-heal)', async () => {
+    provisioning.listVMs.mockResolvedValue([
+      makeVm('running', ['5.5.5.5'], 1806, {
+        plan: 'KVM 1',
+        created_at: new Date().toISOString(),
+      }),
+    ]);
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.purchaseVM).not.toHaveBeenCalled();
+    expect(provisioning.setupVM).not.toHaveBeenCalled();
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { hostinger_vm_id: '1806' },
+    });
+    expect(provisioning.createDockerProject).toHaveBeenCalled();
+    expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
+  });
+
+  it('does not adopt a paid VM in another data center', async () => {
+    provisioning.listVMs.mockResolvedValue([
+      makeVm('running', ['5.5.5.5'], 1806, {
+        plan: 'KVM 1',
+        data_center_id: 19,
+        created_at: new Date().toISOString(),
+      }),
+    ]);
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.purchaseVM).toHaveBeenCalledTimes(1);
   });
 
   it('does not call setupVM when purchase returns a VM already being created', async () => {
@@ -364,7 +398,7 @@ describe('DeployProcessor', () => {
         'deploy-1',
       );
 
-      expect(provisioning.listVMs).toHaveBeenCalledTimes(3);
+      expect(provisioning.listVMs).toHaveBeenCalledTimes(4);
       expect(provisioning.setupVM).not.toHaveBeenCalled();
       expect(provisioning.deleteVM).not.toHaveBeenCalled();
       expect(prisma.deploy.update).toHaveBeenCalledWith({
@@ -392,7 +426,7 @@ describe('DeployProcessor', () => {
     it('ignores VMs with the wrong plan, state or creation time', async () => {
       provisioning.listVMs.mockResolvedValue([
         makeLateVm(101, { plan: 'KVM 2' }),
-        makeLateVm(102, { state: 'running' }),
+        makeLateVm(102, { state: 'suspended' }),
         makeLateVm(103, { created_at: '2020-01-01T00:00:00Z' }),
         makeLateVm(104, { plan: null }),
       ]);

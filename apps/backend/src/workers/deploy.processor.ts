@@ -21,6 +21,8 @@ const LATE_VM_POLL_INTERVAL_MS = 15_000;
 const LATE_VM_POLL_MAX_ATTEMPTS = 12;
 /** Clock-skew slack when matching a late VM's created_at against purchase start. */
 const LATE_VM_CREATED_AT_SLACK_MS = 60_000;
+/** Only adopt a pre-existing paid VM if it was created within this window. */
+const ADOPTABLE_ORPHAN_MAX_AGE_MS = 24 * 60 * 60_000;
 
 export function isHermesPlan(plan: string | null): boolean {
   return plan !== null && plan.toLowerCase().replace(/\s+/g, '').includes('kvm1');
@@ -177,6 +179,16 @@ export class DeployProcessor {
    * fresh, unclaimed KVM 1 VM and adopt it; give up (fail) if none appears.
    */
   private async acquireVm(deployId: string): Promise<HostingerVirtualMachine> {
+    // Self-heal: if a prior deploy paid for a VM but never finished (e.g. a 402
+    // race that completed after the worker gave up), reuse that paid machine
+    // instead of charging the operator again.
+    const orphan = await this.findAdoptableOrphan();
+    if (orphan) {
+      this.logger.log(`deploy ${deployId}: reusing paid orphan vm ${orphan.id}`);
+      await this.log(deployId, 'adopt_orphan', 'success', `reusing paid vm ${orphan.id}`);
+      return orphan;
+    }
+
     const purchaseStartedAt = Date.now();
     try {
       const purchase = await this.provisioning.purchaseVM({
@@ -190,7 +202,9 @@ export class DeployProcessor {
       await this.log(deployId, 'purchase_402', 'warning', 'purchase 402 — watching for a late VM');
       const vm = await this.waitForLateVm(purchaseStartedAt);
       if (!vm) {
-        throw new Error('Purchase failed with 402 and no VM appeared within the grace window');
+        throw new Error('Purchase failed with 402 and no VM appeared within the grace window', {
+          cause: err,
+        });
       }
       await this.log(deployId, 'adopt_vm', 'success', `adopted late vm ${vm.id} after 402`);
       return vm;
@@ -231,6 +245,35 @@ export class DeployProcessor {
     });
     const claimedIds = new Set(claimed.map((d) => d.hostinger_vm_id));
     return candidates.find((vm) => !claimedIds.has(String(vm.id))) ?? null;
+  }
+
+  /**
+   * A paid VM is adoptable when it is a KVM 1 in our data center, still alive
+   * (initial/creating/running), recently created, and unclaimed by any deploy.
+   * KVM 1 + data-center filters exclude the control-plane box (a different
+   * plan/region), so we never grab our own infrastructure. Returns the newest.
+   */
+  private async findAdoptableOrphan(): Promise<HostingerVirtualMachine | null> {
+    const now = Date.now();
+    const vms = await withRetry(() => this.provisioning.listVMs(), this.retryOpts());
+    const candidates = vms.filter((vm) => {
+      if (vm.state !== 'initial' && vm.state !== 'creating' && vm.state !== 'running') return false;
+      if (!isHermesPlan(vm.plan)) return false;
+      if (vm.data_center_id !== HERMES_DATA_CENTER_ID) return false;
+      const createdAt = Date.parse(vm.created_at);
+      return Number.isFinite(createdAt) && now - createdAt <= ADOPTABLE_ORPHAN_MAX_AGE_MS;
+    });
+    if (candidates.length === 0) return null;
+
+    const claimed = await this.prisma.deploy.findMany({
+      where: { hostinger_vm_id: { in: candidates.map((vm) => String(vm.id)) } },
+      select: { hostinger_vm_id: true },
+    });
+    const claimedIds = new Set(claimed.map((d) => d.hostinger_vm_id));
+    const free = candidates
+      .filter((vm) => !claimedIds.has(String(vm.id)))
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    return free[0] ?? null;
   }
 
   private async waitForVm(vmId: number): Promise<HostingerVirtualMachine> {
