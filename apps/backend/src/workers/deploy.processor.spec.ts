@@ -316,6 +316,29 @@ describe('DeployProcessor', () => {
     });
   });
 
+  it('re-adopts a paid VM whose only claim is a failed deploy (no purchase)', async () => {
+    provisioning.listVMs.mockResolvedValue([
+      makeVm('running', ['5.5.5.5'], 1806, {
+        plan: 'KVM 1',
+        created_at: new Date().toISOString(),
+      }),
+    ]);
+    // The active-claim query filters out the failed deploy, so it returns empty.
+    prisma.deploy.findMany.mockResolvedValue([]);
+
+    await makeProcessor().process('deploy-1');
+
+    expect(prisma.deploy.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['pending', 'creating', 'configuring', 'ready'] },
+        }),
+      }),
+    );
+    expect(provisioning.purchaseVM).not.toHaveBeenCalled();
+    expect(notifier.deployReady).toHaveBeenCalled();
+  });
+
   it('does not adopt a paid VM in another data center', async () => {
     provisioning.listVMs.mockResolvedValue([
       makeVm('running', ['5.5.5.5'], 1806, {

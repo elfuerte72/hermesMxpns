@@ -23,6 +23,12 @@ const LATE_VM_POLL_MAX_ATTEMPTS = 12;
 const LATE_VM_CREATED_AT_SLACK_MS = 60_000;
 /** Only adopt a pre-existing paid VM if it was created within this window. */
 const ADOPTABLE_ORPHAN_MAX_AGE_MS = 24 * 60 * 60_000;
+/**
+ * Deploy statuses that still "own" their VM. A VM referenced only by a failed
+ * or deleted deploy is fair game to re-adopt — otherwise a paid machine from a
+ * failed attempt is stranded forever and the next retry buys a new one.
+ */
+const ACTIVE_DEPLOY_STATUSES = ['pending', 'creating', 'configuring', 'ready'] as const;
 
 export function isHermesPlan(plan: string | null): boolean {
   return plan !== null && plan.toLowerCase().replace(/\s+/g, '').includes('kvm1');
@@ -244,11 +250,7 @@ export class DeployProcessor {
     });
     if (candidates.length === 0) return null;
 
-    const claimed = await this.prisma.deploy.findMany({
-      where: { hostinger_vm_id: { in: candidates.map((vm) => String(vm.id)) } },
-      select: { hostinger_vm_id: true },
-    });
-    const claimedIds = new Set(claimed.map((d) => d.hostinger_vm_id));
+    const claimedIds = await this.activeClaimedVmIds(candidates.map((vm) => String(vm.id)));
     return candidates.find((vm) => !claimedIds.has(String(vm.id))) ?? null;
   }
 
@@ -270,15 +272,20 @@ export class DeployProcessor {
     });
     if (candidates.length === 0) return null;
 
-    const claimed = await this.prisma.deploy.findMany({
-      where: { hostinger_vm_id: { in: candidates.map((vm) => String(vm.id)) } },
-      select: { hostinger_vm_id: true },
-    });
-    const claimedIds = new Set(claimed.map((d) => d.hostinger_vm_id));
+    const claimedIds = await this.activeClaimedVmIds(candidates.map((vm) => String(vm.id)));
     const free = candidates
       .filter((vm) => !claimedIds.has(String(vm.id)))
       .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
     return free[0] ?? null;
+  }
+
+  /** VM ids among `ids` that are still held by an active (non-failed) deploy. */
+  private async activeClaimedVmIds(ids: string[]): Promise<Set<string | null>> {
+    const claimed = await this.prisma.deploy.findMany({
+      where: { hostinger_vm_id: { in: ids }, status: { in: [...ACTIVE_DEPLOY_STATUSES] } },
+      select: { hostinger_vm_id: true },
+    });
+    return new Set(claimed.map((d) => d.hostinger_vm_id));
   }
 
   private async waitForVm(vmId: number): Promise<HostingerVirtualMachine> {
