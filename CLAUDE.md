@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `AGENTS.md` — единый источник правды по намерению, стеку, конвенциям и **boundaries** (секреты, живой Hostinger-токен, `DRY_RUN`, зафиксированные тариф/регион/template). Прочитать его перед работой; ниже — только то, что дополняет его (архитектура «между файлами» + команды). Doc-driven: контекст в `docs/intent/` → `docs/architecture/` → `docs/plan/`. Факты Hostinger/Hermes сверены в `docs/architecture` — не угадывать, при пробеле спросить человека.
 
-**Статус:** MVP код-комплит на моках — Tasks 1–18 закрыты (полный backend-флоу: deploys → BullMQ-воркер → Docker Manager API → ready; teardown, reconcile-cron, watchdog; Mini App UI). 164 теста: 149 backend (Jest) + 15 frontend (vitest). **Прод развёрнут в Dokploy:** `https://hermes.mxpkn8ns.ru` (single-origin: backend отдаёт Mini App под `/app/`; ранбук — `docs/deploy/dokploy.md`). Чекпойнт реального деплоя начат 2026-07-05: на проде `DRY_RUN=false`, живой прогон дошёл до `purchaseVM` (платёж отклонён банком — fail-path проверен боем: `failed` без ретрая и без orphan-VM); happy-path ждёт пополнения карты. Автодеплой из `main` работает через GitHub-webhook (настроен 2026-07-05). Открыто: завершение чекпойнта и Phase 6 (биллинг Telegram Stars).
+**Статус:** MVP работает end-to-end в проде. **Чекпойнт реального деплоя пройден 2026-07-05** — живой клиент из Telegram развернул агента (VPS куплен → Hermes через Docker Manager → бот отвечает; `chat_id`/allowed-user подставляется автоматически из TMA-`initData`, ручной терминал не нужен). Прод: `https://hermes.mxpkn8ns.ru` (Dokploy, single-origin `/app/`, автодеплой из `main` через GitHub-webhook; `DRY_RUN=false`). 232 теста (200 backend Jest + 32 frontend vitest).
+
+Что добавилось за 2026-07-05 (см. architecture §19–§21):
+- Доставка секретов — **Docker Manager API** (post-install/bootstrap/webhook выпилены).
+- Каталог LLM v2 с оплатой из РФ (Groq/ProxyAPI/VseGPT/OpenRouter/custom) + `validate-llm-key` с пробами chat/tools/stream.
+- Устойчивость к гонке оплаты Hostinger (402/деклайн): **self-heal** — воркер подхватывает уже оплаченную KVM 1 (Vilnius, <24ч, не занятую активным деплоем) вместо новой покупки; при сбое adopted-VM не удаляется.
+- CPU-лимит контейнера `1.0` (KVM 1 = 1 vCPU; `2.0` не давал контейнеру стартовать).
+- **Личный кабинет «Мои агенты»**: список + `POST /deploys/:id/restart`, `PATCH /deploys/:id/llm-key` (owner-checked, ready-only), удаление; teardown не удаляет VM, занятую другим активным деплоем.
+- Пиксельный игровой UI (Press Start 2P, вордмарк-логотип).
+
+Открыто: Phase 6 (биллинг Telegram Stars), опц. транзакционность смены ключа. **`DRY_RUN=false` в проде — каждый деплой тратит реальные деньги оператора.**
 
 ## Commands (запускать из корня, если не сказано иное)
 
@@ -35,7 +45,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Auth (Telegram Mini App).** `TmaAuthGuard` берёт `Authorization`, `parseTmaAuthHeader` (shared) достаёт initData, `AuthService.authenticate` проверяет HMAC-подпись Telegram + freshness (`validateInitData` в `auth/tma-validation.ts`), затем upsert юзера по `telegram_id`. Провал → 401 с кодом ошибки.
 
-**Provisioning.** Тонкая обёртка над официальным `hostinger-api-sdk`: маппит SDK-ресурсы в `Hostinger*`-типы из shared. `purchaseVM` **тратит реальные деньги** → только под `DRY_RUN`/чекпойнтом. `deleteVM` идёт сырым axios (нет в SDK). Deploy-flow (с 2026-07-05, см. architecture §19): воркер покупает VM, ждёт `running`, расшифровывает секреты и пушит Hermes-проект напрямую через Docker Manager API (`createDockerProject`: compose без секретов, секреты в project-`.env`), поллит контейнеры до `running` → `ready`. Post-install script / bootstrap-pull / webhook выпилены.
+**Provisioning.** Тонкая обёртка над официальным `hostinger-api-sdk`: маппит SDK-ресурсы в `Hostinger*`-типы из shared. `purchaseVM` **тратит реальные деньги**. `deleteVM` идёт сырым axios (нет в SDK). Deploy-flow (с 2026-07-05, см. architecture §19): воркер **acquireVm** (сначала self-heal — подхват уже оплаченной свободной KVM 1; иначе purchase, толерантный к 402-гонке) → ждёт `running` → расшифровывает секреты → пушит Hermes-проект через Docker Manager API (`createDockerProject`: compose без секретов + `cpus: 1.0`, секреты в project-`.env`, `TELEGRAM_ALLOWED_USERS`/`TELEGRAM_BOT_TOKEN` из деплоя) → поллит контейнеры до `running` → `ready`. Post-install script / bootstrap-pull / webhook выпилены. Управление после деплоя (кабинет): `restartDockerProject`, `updateDockerProject` (re-push нового env через `createNewProjectV1`-overwrite — `updateProjectV1` не несёт body). Teardown удаляет VM только если её не держит другой активный деплой.
 
 **Bot.** grammY entry-бот. `BOT_USE_WEBHOOK`: `false` = long-polling (dev), `true` = webhook на `/bot/<token>`. Нет `BOT_TOKEN` → бот выключен (варнинг, не падение).
 

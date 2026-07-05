@@ -44,3 +44,5 @@
 - Порт 3000 наружу не публиковать — только через Traefik.
 - `BACKEND_URL` обязан быть публичным HTTPS только для Telegram-вебхука бота (`BOT_USE_WEBHOOK=true`).
 - Смена схемы БД: миграции накатываются при рестарте контейнера (`migrate deploy`), отдельного шага не нужно.
+- Ручные SQL по прод-БД — через Dokploy: сервис `hermes-postgres` → **Open Terminal** → `psql -U postgres -d hermes_deployer -c "…"`. Внешний `:5432` на хосте — это Postgres самого Dokploy, не наш (снаружи к `hermes_deployer` не подключиться). Удаление строк `deploys` **не трогает VPS** (в отличие от teardown) — безопасно для чистки мусорных/проваленных записей.
+- MCP `hostinger-api` (обёртка над Hostinger API) подключён в Claude Code (`claude mcp add hostinger-api`). Для диагностики контейнера Hermes на клиентском VPS (когда `docker compose up` «успех», но 0 контейнеров) — браузер-терминал VPS в hPanel: `docker ps -a`, `cd /docker/<project> && docker compose up -d` покажет реальную ошибку (API docker-logs отдаёт «project not found» при 0 контейнеров).
