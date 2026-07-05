@@ -40,7 +40,7 @@
 
 ## Ограничения и заметки
 
-- IP-проверка `/bootstrap` рассчитана ровно на **один** доверенный прокси перед бэкендом (Traefik Dokploy): берётся последний хоп `X-Forwarded-For`. Не ставить перед ним второй прокси/CDN (Cloudflare proxy) без правки `bootstrap/client-ip.ts`.
-- Порт 3000 наружу не публиковать — только через Traefik, иначе `X-Forwarded-For` спуфится.
-- Реальный деплой-чекпойнт: `BACKEND_URL` обязан быть публичным HTTPS — клиентские VPS Hostinger тянут секреты с `/bootstrap` и отчитываются на `/webhooks/deploy-ready`.
+- Доставка секретов на клиентские VPS идёт через Hostinger Docker Manager API (с 2026-07-05, см. architecture §19) — публичных `/bootstrap` и `/webhooks/deploy-ready` больше нет, клиентские VPS бэкенд не вызывают.
+- Порт 3000 наружу не публиковать — только через Traefik.
+- `BACKEND_URL` обязан быть публичным HTTPS только для Telegram-вебхука бота (`BOT_USE_WEBHOOK=true`).
 - Смена схемы БД: миграции накатываются при рестарте контейнера (`migrate deploy`), отдельного шага не нужно.

@@ -5,7 +5,7 @@ describe('TeardownProcessor', () => {
     deploy: { findUnique: jest.Mock; update: jest.Mock };
     provisioningLog: { create: jest.Mock };
   };
-  let provisioning: { deleteVM: jest.Mock; deletePostInstallScript: jest.Mock };
+  let provisioning: { deleteVM: jest.Mock };
   let notifier: { deployDeleted: jest.Mock };
   let config: TeardownProcessorConfig;
 
@@ -16,7 +16,6 @@ describe('TeardownProcessor', () => {
       bot_username: 'coolbot',
       status: 'ready',
       hostinger_vm_id: '777',
-      hostinger_script_id: '555',
       ...overrides,
     };
   }
@@ -38,17 +37,15 @@ describe('TeardownProcessor', () => {
     };
     provisioning = {
       deleteVM: jest.fn().mockResolvedValue(undefined),
-      deletePostInstallScript: jest.fn().mockResolvedValue(undefined),
     };
     notifier = { deployDeleted: jest.fn().mockResolvedValue(undefined) };
     config = { dryRun: false };
   });
 
-  it('deletes the VM + script, marks deleted and notifies', async () => {
+  it('deletes the VM, marks deleted and notifies', async () => {
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
-    expect(provisioning.deletePostInstallScript).toHaveBeenCalledWith(555);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'deleted' },
@@ -73,7 +70,6 @@ describe('TeardownProcessor', () => {
   it('under DRY_RUN skips Hostinger deletions but still marks deleted', async () => {
     await makeProcessor(true).process('deploy-1');
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
-    expect(provisioning.deletePostInstallScript).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'deleted' },
@@ -91,9 +87,7 @@ describe('TeardownProcessor', () => {
   });
 
   it('handles a deploy with no provisioned resources', async () => {
-    prisma.deploy.findUnique.mockResolvedValue(
-      makeDeploy({ hostinger_vm_id: null, hostinger_script_id: null }),
-    );
+    prisma.deploy.findUnique.mockResolvedValue(makeDeploy({ hostinger_vm_id: null }));
     await makeProcessor().process('deploy-1');
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({

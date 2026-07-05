@@ -7,8 +7,6 @@ export const DEPLOY_JOB_NAME = 'deploy';
 /** Payload handed to the provisioning worker (Task 12). */
 export interface DeployJobData {
   deployId: string;
-  /** Plaintext one-time bootstrap token — embedded in the post-install URL. */
-  bootstrapToken: string;
 }
 
 /**

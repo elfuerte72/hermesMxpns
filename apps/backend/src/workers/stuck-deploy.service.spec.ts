@@ -8,7 +8,7 @@ describe('StuckDeployService', () => {
     deploy: { findMany: jest.Mock; update: jest.Mock };
     provisioningLog: { create: jest.Mock };
   };
-  let provisioning: { deleteVM: jest.Mock; deletePostInstallScript: jest.Mock };
+  let provisioning: { deleteVM: jest.Mock };
   let notifier: { deployFailed: jest.Mock };
 
   function makeStuck(overrides: Record<string, unknown> = {}) {
@@ -17,7 +17,6 @@ describe('StuckDeployService', () => {
       user_id: 55n,
       status: 'configuring',
       hostinger_vm_id: '777',
-      hostinger_script_id: '555',
       updated_at: new Date('2026-07-04T00:00:00Z'),
       ...overrides,
     };
@@ -40,7 +39,6 @@ describe('StuckDeployService', () => {
     };
     provisioning = {
       deleteVM: jest.fn().mockResolvedValue(undefined),
-      deletePostInstallScript: jest.fn().mockResolvedValue(undefined),
     };
     notifier = { deployFailed: jest.fn().mockResolvedValue(undefined) };
   });
@@ -61,7 +59,6 @@ describe('StuckDeployService', () => {
     const failed = await makeService().sweep(NOW);
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
-    expect(provisioning.deletePostInstallScript).toHaveBeenCalledWith(555);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'd1' },
       data: { status: 'failed' },

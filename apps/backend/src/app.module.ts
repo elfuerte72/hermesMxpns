@@ -9,9 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { LlmProvidersModule } from './llm-providers/llm-providers.module';
 import { BotModule } from './bot/bot.module';
 import { DeploysModule } from './deploys/deploys.module';
-import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { WorkersModule } from './workers/workers.module';
-import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -23,9 +21,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     LlmProvidersModule,
     BotModule,
     DeploysModule,
-    BootstrapModule,
     WorkersModule,
-    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [AppService],

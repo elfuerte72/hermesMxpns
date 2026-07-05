@@ -10,7 +10,6 @@ import { SecretsService } from '../secrets/secrets.service';
 import { ValidateBotTokenService } from './validate-bot-token.service';
 import { DeployQueue } from './deploy-queue';
 import { TeardownQueue } from './teardown-queue';
-import { generateBootstrapToken } from './bootstrap-token';
 import type { CreateDeployDto } from './create-deploy.dto';
 
 @Injectable()
@@ -38,8 +37,6 @@ export class DeploysService {
       update: {},
     });
 
-    const { token, hash } = generateBootstrapToken();
-
     const deploy = await this.prisma.deploy.create({
       data: {
         user_id: telegramId,
@@ -49,13 +46,11 @@ export class DeploysService {
         llm_base_url: dto.llm_base_url ?? null,
         llm_model: dto.llm_model ?? null,
         llm_key_enc: this.secrets.encrypt(dto.llm_key),
-        bootstrap_token_hash: hash,
       },
       select: { id: true },
     });
 
-    // Plaintext bootstrap token travels only via the job payload (Redis, internal).
-    await this.queue.enqueueDeploy({ deployId: deploy.id, bootstrapToken: token });
+    await this.queue.enqueueDeploy({ deployId: deploy.id });
     this.logger.log(`Created deploy ${deploy.id} for @${username}`);
 
     return { deploy_id: deploy.id, status: 'pending' };

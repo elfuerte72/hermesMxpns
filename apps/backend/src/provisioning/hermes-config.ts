@@ -1,8 +1,7 @@
 /**
- * Pure renderers for the three Hermes files the VPS writes into ~/.hermes.
- * Encodes the config facts from architecture §5 (docker) and §7 (providers).
- * These run server-side (at bootstrap time) so secrets never touch the
- * account-visible post-install script.
+ * Pure renderers for the Hermes deployment files, pushed to the VPS via the
+ * Hostinger Docker Manager API (compose content + project .env). Encodes the
+ * config facts from architecture §5 (docker) and §7 (providers).
  */
 
 /** Container memory limit tuned for KVM 1 (4 GB) — leaves headroom for the OS. */
@@ -38,7 +37,7 @@ function yamlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-/** Render ~/.hermes/.env — read by Hermes from its data volume. */
+/** Render the project .env (Docker Manager `environment`) — injected into the container via env_file. */
 export function renderEnvFile(p: EnvFileParams): string {
   assertSingleLine('bot token', p.botToken);
   assertSingleLine('allowed user id', p.allowedUserId);
@@ -53,7 +52,7 @@ export function renderEnvFile(p: EnvFileParams): string {
   ].join('\n');
 }
 
-/** Render ~/.hermes/config.yaml — provider wiring (§7). */
+/** Render config.yaml — provider wiring (§7), mounted to /opt/data/config.yaml. */
 export function renderConfigYaml(p: ConfigYamlParams): string {
   return [
     'custom_providers:',
@@ -67,9 +66,26 @@ export function renderConfigYaml(p: ConfigYamlParams): string {
   ].join('\n');
 }
 
-/** Render ~/.hermes/docker-compose.yml (§5, memory clamped for KVM 1). */
-export function renderComposeFile(hostDir: string = HERMES_HOST_DIR): string {
+export interface ComposeFileParams {
+  /** Rendered config.yaml content, embedded as an inline compose config. */
+  configYaml: string;
+  hostDir?: string;
+}
+
+/**
+ * Render the docker-compose.yml sent to the Docker Manager API (§5, memory
+ * clamped for KVM 1). config.yaml (no secrets) rides along as an inline
+ * compose config mounted at /opt/data/config.yaml; secrets stay out of the
+ * compose content and arrive via the project .env (`env_file`).
+ */
+export function renderComposeFile(p: ComposeFileParams): string {
+  const hostDir = p.hostDir ?? HERMES_HOST_DIR;
+  const configLines = p.configYaml.replace(/\n+$/, '').split('\n');
   return [
+    'configs:',
+    '  hermes_config:',
+    '    content: |',
+    ...configLines.map((line) => (line === '' ? '' : `      ${line}`)),
     'services:',
     '  hermes:',
     '    image: nousresearch/hermes-agent:latest',
@@ -80,8 +96,13 @@ export function renderComposeFile(hostDir: string = HERMES_HOST_DIR): string {
     '      - "9119:9119"',
     '    volumes:',
     `      - "${hostDir}:/opt/data"`,
+    '    env_file:',
+    '      - .env',
     '    environment:',
     '      - HERMES_DASHBOARD=1',
+    '    configs:',
+    '      - source: hermes_config',
+    '        target: /opt/data/config.yaml',
     '    deploy:',
     '      resources:',
     '        limits:',

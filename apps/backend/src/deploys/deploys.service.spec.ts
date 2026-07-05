@@ -2,11 +2,14 @@ import { ConflictException, NotFoundException, UnprocessableEntityException } fr
 import type { AuthenticatedUser } from '@hermes/shared';
 import { DeploysService } from './deploys.service';
 import { SecretsService } from '../secrets/secrets.service';
-import { hashBootstrapToken } from './bootstrap-token';
 import type { CreateDeployDto } from './create-deploy.dto';
 
 const USER: AuthenticatedUser = { telegram_id: '12345', username: 'alice' };
-const DTO: CreateDeployDto = { bot_token: '123456:abc', llm_provider: 'groq', llm_key: 'sk-secret' };
+const DTO: CreateDeployDto = {
+  bot_token: '123456:abc',
+  llm_provider: 'groq',
+  llm_key: 'sk-secret',
+};
 // 32-byte test key (64 hex) — real AES-256-GCM encryption in the assertions below.
 const TEST_KEY = 'a'.repeat(64);
 
@@ -78,18 +81,9 @@ describe('DeploysService', () => {
     expect(data).not.toHaveProperty('llm_key');
   });
 
-  it('stores only the bootstrap token hash, passing the plaintext to the queue', async () => {
+  it('enqueues only the deploy id — no secrets in the job payload', async () => {
     await service.create(USER, DTO);
-
-    const storedHash = prisma.deploy.create.mock.calls[0][0].data.bootstrap_token_hash;
-    const jobData = queue.enqueueDeploy.mock.calls[0][0];
-
-    expect(jobData.deployId).toBe('deploy-1');
-    expect(jobData.bootstrapToken).toMatch(/^[0-9a-f]{64}$/);
-    // The hash in the DB must correspond to the plaintext handed to the worker...
-    expect(hashBootstrapToken(jobData.bootstrapToken)).toBe(storedHash);
-    // ...and the plaintext token must never be persisted.
-    expect(storedHash).not.toBe(jobData.bootstrapToken);
+    expect(queue.enqueueDeploy).toHaveBeenCalledWith({ deployId: 'deploy-1' });
   });
 
   it('persists the custom provider base_url and model', async () => {
@@ -141,7 +135,6 @@ describe('DeploysService', () => {
     // Secret columns that must NOT appear in the view:
     bot_token_enc: 'v1:secret',
     llm_key_enc: 'v1:secret',
-    bootstrap_token_hash: 'hash',
     user_id: 12345n,
   };
 

@@ -28,12 +28,6 @@ export interface HostingerCatalogItem {
   prices: HostingerCatalogPrice[];
 }
 
-export interface HostingerPostInstallScript {
-  id: number;
-  name: string;
-  content: string;
-}
-
 export type HostingerVmState =
   | 'running'
   | 'starting'
@@ -76,7 +70,6 @@ export interface HostingerAction {
 export interface HostingerPurchaseSetup {
   templateId: number;
   dataCenterId: number;
-  postInstallScriptId: number;
   hostname?: string;
   password?: string;
   enableBackups?: boolean;
@@ -92,4 +85,18 @@ export interface HostingerPurchaseRequest {
 export interface HostingerPurchaseResult {
   orderId: number | string;
   virtualMachine: HostingerVirtualMachine;
+}
+
+export type HostingerDockerContainerState =
+  'created' | 'running' | 'restarting' | 'exited' | 'paused' | 'dead' | 'stopping';
+
+export type HostingerDockerContainerHealth = 'starting' | 'healthy' | 'unhealthy' | '';
+
+export interface HostingerDockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  state: HostingerDockerContainerState;
+  health: HostingerDockerContainerHealth;
 }

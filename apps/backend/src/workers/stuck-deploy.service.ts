@@ -10,9 +10,9 @@ export interface StuckDeployConfig {
 }
 
 /**
- * Watchdog for deploys wedged mid-provisioning — e.g. the VPS never called the
- * deploy-ready webhook, or the worker crashed. Fails them and rolls back any
- * created Hostinger resources so nothing is left orphaned.
+ * Watchdog for deploys wedged mid-provisioning — e.g. the worker crashed
+ * between claiming and finishing. Fails them and rolls back any created
+ * Hostinger resources so nothing is left orphaned.
  */
 export class StuckDeployService {
   private readonly logger = new Logger(StuckDeployService.name);
@@ -40,11 +40,6 @@ export class StuckDeployService {
         if (deploy.hostinger_vm_id) {
           await this.tryCleanup(deploy.id, 'timeout_vm', deploy.hostinger_vm_id, (id) =>
             this.provisioning.deleteVM(id),
-          );
-        }
-        if (deploy.hostinger_script_id) {
-          await this.tryCleanup(deploy.id, 'timeout_script', deploy.hostinger_script_id, (id) =>
-            this.provisioning.deletePostInstallScript(id),
           );
         }
       }

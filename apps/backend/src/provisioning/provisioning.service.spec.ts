@@ -7,8 +7,8 @@ import {
   Configuration,
   VPSActionsApi,
   VPSDataCentersApi,
+  VPSDockerManagerApi,
   VPSOSTemplatesApi,
-  VPSPostInstallScriptsApi,
   VPSVirtualMachineApi,
 } from 'hostinger-api-sdk';
 import { ProvisioningService } from './provisioning.service';
@@ -26,12 +26,12 @@ describe('ProvisioningService', () => {
     getCatalogItemListV1: jest.fn(),
     getDataCenterListV1: jest.fn(),
     getTemplatesV1: jest.fn(),
-    createPostInstallScriptV1: jest.fn(),
-    deletePostInstallScriptV1: jest.fn(),
     purchaseNewVirtualMachineV1: jest.fn(),
     getVirtualMachineDetailsV1: jest.fn(),
     getVirtualMachinesV1: jest.fn(),
     getActionsV1: jest.fn(),
+    createNewProjectV1: jest.fn(),
+    getProjectContainersV1: jest.fn(),
   };
 
   beforeEach(() => {
@@ -44,9 +44,9 @@ describe('ProvisioningService', () => {
       getDataCenterListV1: api.getDataCenterListV1,
     }));
     asMock(VPSOSTemplatesApi).mockImplementation(() => ({ getTemplatesV1: api.getTemplatesV1 }));
-    asMock(VPSPostInstallScriptsApi).mockImplementation(() => ({
-      createPostInstallScriptV1: api.createPostInstallScriptV1,
-      deletePostInstallScriptV1: api.deletePostInstallScriptV1,
+    asMock(VPSDockerManagerApi).mockImplementation(() => ({
+      createNewProjectV1: api.createNewProjectV1,
+      getProjectContainersV1: api.getProjectContainersV1,
     }));
     asMock(VPSVirtualMachineApi).mockImplementation(() => ({
       purchaseNewVirtualMachineV1: api.purchaseNewVirtualMachineV1,
@@ -115,30 +115,48 @@ describe('ProvisioningService', () => {
     });
   });
 
-  it('createPostInstallScript passes name+content and returns the script id', async () => {
-    api.createPostInstallScriptV1.mockResolvedValue({
-      data: {
-        id: 6324,
-        name: 'hermes-bootstrap',
-        content: '#!/bin/bash',
-        created_at: 'x',
-        updated_at: 'x',
-      },
-    });
+  it('createDockerProject sends the compose content and project env to the SDK', async () => {
+    api.createNewProjectV1.mockResolvedValue({ data: { id: 1 } });
 
-    const result = await svc.createPostInstallScript('hermes-bootstrap', '#!/bin/bash');
+    await svc.createDockerProject(123, 'hermes-deploy-1', 'services: {}', 'A=1\n');
 
-    expect(api.createPostInstallScriptV1).toHaveBeenCalledWith({
-      name: 'hermes-bootstrap',
-      content: '#!/bin/bash',
+    expect(api.createNewProjectV1).toHaveBeenCalledWith(123, {
+      project_name: 'hermes-deploy-1',
+      content: 'services: {}',
+      environment: 'A=1\n',
     });
-    expect(result.id).toBe(6324);
   });
 
-  it('deletePostInstallScript calls SDK with the id', async () => {
-    api.deletePostInstallScriptV1.mockResolvedValue({ data: {} });
-    await svc.deletePostInstallScript(6324);
-    expect(api.deletePostInstallScriptV1).toHaveBeenCalledWith(6324);
+  it('getDockerProjectContainers maps container state and health', async () => {
+    api.getProjectContainersV1.mockResolvedValue({
+      data: [
+        {
+          id: 'abc123',
+          name: 'hermes-1',
+          image: 'nousresearch/hermes-agent:latest',
+          command: 'gateway run',
+          status: 'Up 5 seconds',
+          state: 'running',
+          health: '',
+          ports: [],
+          stats: null,
+        },
+      ],
+    });
+
+    const result = await svc.getDockerProjectContainers(123, 'hermes-deploy-1');
+
+    expect(api.getProjectContainersV1).toHaveBeenCalledWith(123, 'hermes-deploy-1');
+    expect(result).toEqual([
+      {
+        id: 'abc123',
+        name: 'hermes-1',
+        image: 'nousresearch/hermes-agent:latest',
+        status: 'Up 5 seconds',
+        state: 'running',
+        health: '',
+      },
+    ]);
   });
 
   it('purchaseVM builds the purchase request and returns the created VM', async () => {
@@ -160,17 +178,13 @@ describe('ProvisioningService', () => {
 
     const result = await svc.purchaseVM({
       itemId: 'hostingercom-vps-kvm1-usd-1m',
-      setup: { templateId: 1121, dataCenterId: 11, postInstallScriptId: 6324 },
+      setup: { templateId: 1121, dataCenterId: 11 },
     });
 
     expect(api.purchaseNewVirtualMachineV1).toHaveBeenCalledWith(
       expect.objectContaining({
         item_id: 'hostingercom-vps-kvm1-usd-1m',
-        setup: expect.objectContaining({
-          template_id: 1121,
-          data_center_id: 11,
-          post_install_script_id: 6324,
-        }),
+        setup: { template_id: 1121, data_center_id: 11 },
       }),
     );
     expect(result.orderId).toBe(99);

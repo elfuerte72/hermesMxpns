@@ -45,13 +45,35 @@ describe('renderConfigYaml', () => {
 });
 
 describe('renderComposeFile', () => {
+  const configYaml = renderConfigYaml({
+    provider: 'groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    keyEnv: 'GROQ_API_KEY',
+    model: 'llama-3.3-70b-versatile',
+  });
+
   it('renders the Hermes compose clamped to KVM 1 memory', () => {
-    const compose = renderComposeFile();
+    const compose = renderComposeFile({ configYaml });
     expect(compose).toContain('image: nousresearch/hermes-agent:latest');
     expect(compose).toContain('command: gateway run');
     expect(compose).toContain('"8642:8642"');
     expect(compose).toContain('"/root/.hermes:/opt/data"');
     expect(compose).toContain(`memory: ${HERMES_MEMORY_LIMIT}`);
     expect(HERMES_MEMORY_LIMIT).toBe('3G');
+  });
+
+  it('embeds config.yaml as an inline compose config mounted into /opt/data', () => {
+    const compose = renderComposeFile({ configYaml });
+    expect(compose).toContain('configs:');
+    expect(compose).toContain('    content: |');
+    expect(compose).toContain('      custom_providers:');
+    expect(compose).toContain('        - name: "groq"');
+    expect(compose).toContain('target: /opt/data/config.yaml');
+  });
+
+  it('wires the project .env into the container via env_file', () => {
+    const compose = renderComposeFile({ configYaml });
+    expect(compose).toContain('env_file:');
+    expect(compose).toContain('- .env');
   });
 });

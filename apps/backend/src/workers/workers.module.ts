@@ -5,6 +5,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
 import { ProvisioningService } from '../provisioning/provisioning.service';
+import { SecretsModule } from '../secrets/secrets.module';
+import { SecretsService } from '../secrets/secrets.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { DeployNotifier } from './deploy-notifier';
 import { DeployProcessor } from './deploy.processor';
@@ -23,19 +25,25 @@ const POLL_MAX_ATTEMPTS = 60;
 const PROVISION_TIMEOUT_MS = 20 * 60 * 1000;
 
 @Module({
-  imports: [PrismaModule, ProvisioningModule, NotificationsModule, ScheduleModule.forRoot()],
+  imports: [
+    PrismaModule,
+    ProvisioningModule,
+    SecretsModule,
+    NotificationsModule,
+    ScheduleModule.forRoot(),
+  ],
   providers: [
     {
       provide: DeployProcessor,
-      inject: [PrismaService, ProvisioningService, DeployNotifier, ConfigService],
+      inject: [PrismaService, ProvisioningService, SecretsService, DeployNotifier, ConfigService],
       useFactory: (
         prisma: PrismaService,
         provisioning: ProvisioningService,
+        secrets: SecretsService,
         notifier: DeployNotifier,
         config: ConfigService,
       ) =>
-        new DeployProcessor(prisma, provisioning, notifier, {
-          backendUrl: config.getOrThrow<string>('BACKEND_URL'),
+        new DeployProcessor(prisma, provisioning, secrets, notifier, {
           dryRun: config.get<boolean>('DRY_RUN') ?? true,
           pollIntervalMs: POLL_INTERVAL_MS,
           pollMaxAttempts: POLL_MAX_ATTEMPTS,

@@ -1,6 +1,10 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { Worker } from 'bullmq';
-import { DEPLOY_QUEUE_NAME, parseRedisConnection, type DeployJobData } from '../deploys/deploy-queue';
+import {
+  DEPLOY_QUEUE_NAME,
+  parseRedisConnection,
+  type DeployJobData,
+} from '../deploys/deploy-queue';
 import { DeployProcessor } from './deploy.processor';
 
 /** BullMQ worker that consumes the `deploy` queue and runs the processor. */
@@ -22,7 +26,7 @@ export class DeployWorker implements OnModuleInit, OnModuleDestroy {
     }
     this.worker = new Worker<DeployJobData>(
       DEPLOY_QUEUE_NAME,
-      (job) => this.processor.process(job.data.deployId, job.data.bootstrapToken),
+      (job) => this.processor.process(job.data.deployId),
       { connection: parseRedisConnection(this.redisUrl) },
     );
     this.worker.on('failed', (job, err) => {

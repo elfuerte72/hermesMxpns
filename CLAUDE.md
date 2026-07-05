@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `AGENTS.md` — единый источник правды по намерению, стеку, конвенциям и **boundaries** (секреты, живой Hostinger-токен, `DRY_RUN`, зафиксированные тариф/регион/template). Прочитать его перед работой; ниже — только то, что дополняет его (архитектура «между файлами» + команды). Doc-driven: контекст в `docs/intent/` → `docs/architecture/` → `docs/plan/`. Факты Hostinger/Hermes сверены в `docs/architecture` — не угадывать, при пробеле спросить человека.
 
-**Статус:** MVP код-комплит на моках — Tasks 1–18 закрыты (полный backend-флоу: deploys → BullMQ-воркеры → bootstrap → webhook → ready; teardown, reconcile-cron, watchdog; Mini App UI). 201 тест: 186 backend (Jest) + 15 frontend (vitest). **Прод развёрнут в Dokploy:** `https://hermes.mxpkn8ns.ru` (single-origin: backend отдаёт Mini App под `/app/`; ранбук — `docs/deploy/dokploy.md`). Открыто: чекпойнт реального деплоя VPS (`DRY_RUN=false` — тратит реальные деньги, только с явного одобрения человека) и Phase 6 (биллинг Telegram Stars).
+**Статус:** MVP код-комплит на моках — Tasks 1–18 закрыты (полный backend-флоу: deploys → BullMQ-воркер → Docker Manager API → ready; teardown, reconcile-cron, watchdog; Mini App UI). 164 теста: 149 backend (Jest) + 15 frontend (vitest). **Прод развёрнут в Dokploy:** `https://hermes.mxpkn8ns.ru` (single-origin: backend отдаёт Mini App под `/app/`; ранбук — `docs/deploy/dokploy.md`). Открыто: чекпойнт реального деплоя VPS (`DRY_RUN=false` — тратит реальные деньги, только с явного одобрения человека) и Phase 6 (биллинг Telegram Stars).
 
 ## Commands (запускать из корня, если не сказано иное)
 
@@ -31,11 +31,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Prisma — нестандартно.** Клиент генерируется провайдером `prisma-client` (новый) в **`apps/backend/src/generated/prisma`**, а не в `node_modules` — эта папка в `.gitignore` и в eslint/ts-ignore, но нужна для компиляции: после изменения `schema.prisma` обязательно `prisma:generate`. Подключение — через driver adapter `@prisma/adapter-pg` (`PrismaService` создаёт `PrismaClient` с `PrismaPg` от `DATABASE_URL`). Схема: `User`(telegram_id BigInt PK) → `Deploy` → `ProvisioningLog`; колонки snake_case через `@@map`; `DeployStatus` enum (`pending`→`ready`/`failed`).
 
-**Секреты.** `SecretsService` — AES-256-GCM, формат `v1:base64(iv‖tag‖ciphertext)`, ключ из `ENCRYPTION_KEY` (ровно 64 hex = 32 байта). В БД лежат `bot_token_enc`/`llm_key_enc` (шифр) и `bootstrap_token_hash` (хеш, не сам токен). Работать с секретами только через этот сервис; не логировать, не отдавать в API.
+**Секреты.** `SecretsService` — AES-256-GCM, формат `v1:base64(iv‖tag‖ciphertext)`, ключ из `ENCRYPTION_KEY` (ровно 64 hex = 32 байта). В БД лежат `bot_token_enc`/`llm_key_enc` (только шифр). Работать с секретами только через этот сервис; не логировать, не отдавать в API.
 
 **Auth (Telegram Mini App).** `TmaAuthGuard` берёт `Authorization`, `parseTmaAuthHeader` (shared) достаёт initData, `AuthService.authenticate` проверяет HMAC-подпись Telegram + freshness (`validateInitData` в `auth/tma-validation.ts`), затем upsert юзера по `telegram_id`. Провал → 401 с кодом ошибки.
 
-**Provisioning.** Тонкая обёртка над официальным `hostinger-api-sdk`: маппит SDK-ресурсы в `Hostinger*`-типы из shared. `purchaseVM` **тратит реальные деньги** → только под `DRY_RUN`/чекпойнтом. `deleteVM` идёт сырым axios (нет в SDK). Планируемый deploy-flow (см. architecture): pull-доставка секретов — post-install script без секретов, VPS тянет их с backend по one-time bootstrap-токену + IP-проверке.
+**Provisioning.** Тонкая обёртка над официальным `hostinger-api-sdk`: маппит SDK-ресурсы в `Hostinger*`-типы из shared. `purchaseVM` **тратит реальные деньги** → только под `DRY_RUN`/чекпойнтом. `deleteVM` идёт сырым axios (нет в SDK). Deploy-flow (с 2026-07-05, см. architecture §19): воркер покупает VM, ждёт `running`, расшифровывает секреты и пушит Hermes-проект напрямую через Docker Manager API (`createDockerProject`: compose без секретов, секреты в project-`.env`), поллит контейнеры до `running` → `ready`. Post-install script / bootstrap-pull / webhook выпилены.
 
 **Bot.** grammY entry-бот. `BOT_USE_WEBHOOK`: `false` = long-polling (dev), `true` = webhook на `/bot/<token>`. Нет `BOT_TOKEN` → бот выключен (варнинг, не падение).
 

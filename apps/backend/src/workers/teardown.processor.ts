@@ -9,9 +9,9 @@ export interface TeardownProcessorConfig {
 }
 
 /**
- * BullMQ `teardown` job body — deletes the VM + post-install script and marks
- * the deploy `deleted`. Idempotent: a repeat run on an already-deleted deploy
- * is a no-op; cleanup errors are swallowed (best-effort).
+ * BullMQ `teardown` job body — deletes the VM and marks the deploy `deleted`.
+ * Idempotent: a repeat run on an already-deleted deploy is a no-op; cleanup
+ * errors are swallowed (best-effort).
  */
 export class TeardownProcessor {
   private readonly logger = new Logger(TeardownProcessor.name);
@@ -40,11 +40,6 @@ export class TeardownProcessor {
       if (deploy.hostinger_vm_id) {
         await this.tryCleanup(deployId, 'teardown_vm', deploy.hostinger_vm_id, (id) =>
           this.provisioning.deleteVM(id),
-        );
-      }
-      if (deploy.hostinger_script_id) {
-        await this.tryCleanup(deployId, 'teardown_script', deploy.hostinger_script_id, (id) =>
-          this.provisioning.deletePostInstallScript(id),
         );
       }
     }

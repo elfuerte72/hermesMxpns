@@ -5,15 +5,15 @@ import {
   Configuration,
   VPSActionsApi,
   VPSDataCentersApi,
+  VPSDockerManagerApi,
   VPSOSTemplatesApi,
-  VPSPostInstallScriptsApi,
   VPSVirtualMachineApi,
 } from 'hostinger-api-sdk';
 import type {
   BillingV1CatalogCatalogItemResource,
   VPSV1ActionActionResource,
   VPSV1DataCenterDataCenterResource,
-  VPSV1PostInstallScriptPostInstallScriptResource,
+  VPSV1DockerManagerContainerResource,
   VPSV1TemplateTemplateResource,
   VPSV1VirtualMachinePurchaseRequest,
   VPSV1VirtualMachineVirtualMachineResource,
@@ -22,7 +22,7 @@ import type {
   HostingerAction,
   HostingerCatalogItem,
   HostingerDataCenter,
-  HostingerPostInstallScript,
+  HostingerDockerContainer,
   HostingerPurchaseRequest,
   HostingerPurchaseResult,
   HostingerTemplate,
@@ -37,9 +37,9 @@ export class ProvisioningService {
   private readonly catalogApi: BillingCatalogApi;
   private readonly dataCentersApi: VPSDataCentersApi;
   private readonly templatesApi: VPSOSTemplatesApi;
-  private readonly scriptsApi: VPSPostInstallScriptsApi;
   private readonly vmApi: VPSVirtualMachineApi;
   private readonly actionsApi: VPSActionsApi;
+  private readonly dockerApi: VPSDockerManagerApi;
   private readonly accessToken: string;
 
   constructor(accessToken: string) {
@@ -48,9 +48,9 @@ export class ProvisioningService {
     this.catalogApi = new BillingCatalogApi(config);
     this.dataCentersApi = new VPSDataCentersApi(config);
     this.templatesApi = new VPSOSTemplatesApi(config);
-    this.scriptsApi = new VPSPostInstallScriptsApi(config);
     this.vmApi = new VPSVirtualMachineApi(config);
     this.actionsApi = new VPSActionsApi(config);
+    this.dockerApi = new VPSDockerManagerApi(config);
   }
 
   async getCatalog(): Promise<HostingerCatalogItem[]> {
@@ -68,18 +68,6 @@ export class ProvisioningService {
     return res.data.map(mapTemplate);
   }
 
-  async createPostInstallScript(
-    name: string,
-    content: string,
-  ): Promise<HostingerPostInstallScript> {
-    const res = await this.scriptsApi.createPostInstallScriptV1({ name, content });
-    return mapScript(res.data);
-  }
-
-  async deletePostInstallScript(id: number): Promise<void> {
-    await this.scriptsApi.deletePostInstallScriptV1(id);
-  }
-
   async purchaseVM(request: HostingerPurchaseRequest): Promise<HostingerPurchaseResult> {
     const body = {
       item_id: request.itemId,
@@ -87,7 +75,6 @@ export class ProvisioningService {
       setup: {
         template_id: request.setup.templateId,
         data_center_id: request.setup.dataCenterId,
-        post_install_script_id: request.setup.postInstallScriptId,
       },
       coupons: [],
     };
@@ -113,6 +100,27 @@ export class ProvisioningService {
   async listActions(vmId: number): Promise<HostingerAction[]> {
     const res = await this.actionsApi.getActionsV1(vmId);
     return res.data.data.map(mapAction);
+  }
+
+  async createDockerProject(
+    vmId: number,
+    projectName: string,
+    composeYaml: string,
+    envContent: string,
+  ): Promise<void> {
+    await this.dockerApi.createNewProjectV1(vmId, {
+      project_name: projectName,
+      content: composeYaml,
+      environment: envContent,
+    });
+  }
+
+  async getDockerProjectContainers(
+    vmId: number,
+    projectName: string,
+  ): Promise<HostingerDockerContainer[]> {
+    const res = await this.dockerApi.getProjectContainersV1(vmId, projectName);
+    return res.data.map(mapContainer);
   }
 
   async deleteVM(id: number): Promise<void> {
@@ -147,10 +155,6 @@ function mapCatalogItem(item: BillingV1CatalogCatalogItemResource): HostingerCat
   };
 }
 
-function mapScript(s: VPSV1PostInstallScriptPostInstallScriptResource): HostingerPostInstallScript {
-  return { id: s.id, name: s.name, content: s.content };
-}
-
 function mapVM(vm: VPSV1VirtualMachineVirtualMachineResource): HostingerVirtualMachine {
   return {
     id: vm.id,
@@ -171,5 +175,16 @@ function mapAction(a: VPSV1ActionActionResource): HostingerAction {
     state: a.state as HostingerAction['state'],
     created_at: a.created_at,
     updated_at: a.updated_at,
+  };
+}
+
+function mapContainer(c: VPSV1DockerManagerContainerResource): HostingerDockerContainer {
+  return {
+    id: c.id,
+    name: c.name,
+    image: c.image,
+    status: c.status,
+    state: c.state as HostingerDockerContainer['state'],
+    health: c.health as HostingerDockerContainer['health'],
   };
 }
