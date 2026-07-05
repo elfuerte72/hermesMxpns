@@ -88,12 +88,15 @@ export class DeployProcessor {
     await this.log(deployId, 'claim', 'success', 'pending → creating');
 
     let vmId: number | undefined;
+    let adopted = false;
     try {
-      // 1. Purchase the VM. SPENDS REAL MONEY (guarded by DRY_RUN above); never retried.
+      // 1. Acquire the VM: reuse a paid orphan if one exists, else purchase.
+      // Purchase SPENDS REAL MONEY (guarded by DRY_RUN above); never retried.
       // A 402 may still create the subscription + VM asynchronously (~60s later),
       // so acquireVm watches listVMs before giving up — otherwise a paid orphan leaks.
       const acquired = await this.acquireVm(deployId);
-      const acquiredVmId = acquired.id;
+      adopted = acquired.adopted;
+      const acquiredVmId = acquired.vm.id;
       vmId = acquiredVmId;
       await this.prisma.deploy.update({
         where: { id: deployId },
@@ -102,7 +105,7 @@ export class DeployProcessor {
       await this.log(deployId, 'purchase_vm', 'success', `vm ${acquiredVmId}`);
 
       // 1b. A VM left in `initial` never installs on its own — request setup explicitly.
-      if (acquired.state === 'initial') {
+      if (acquired.vm.state === 'initial') {
         await withRetry(
           () =>
             this.provisioning.setupVM(acquiredVmId, {
@@ -169,7 +172,7 @@ export class DeployProcessor {
       }
       this.logger.log(`deploy ${deployId} is ready (@${deploy.bot_username})`);
     } catch (err) {
-      await this.fail(deployId, deploy.user_id, vmId, err);
+      await this.fail(deployId, deploy.user_id, vmId, adopted, err);
     }
   }
 
@@ -178,7 +181,9 @@ export class DeployProcessor {
    * still spawn the subscription + VM shortly after. On 402, poll listVMs for a
    * fresh, unclaimed KVM 1 VM and adopt it; give up (fail) if none appears.
    */
-  private async acquireVm(deployId: string): Promise<HostingerVirtualMachine> {
+  private async acquireVm(
+    deployId: string,
+  ): Promise<{ vm: HostingerVirtualMachine; adopted: boolean }> {
     // Self-heal: if a prior deploy paid for a VM but never finished (e.g. a 402
     // race that completed after the worker gave up), reuse that paid machine
     // instead of charging the operator again.
@@ -186,7 +191,7 @@ export class DeployProcessor {
     if (orphan) {
       this.logger.log(`deploy ${deployId}: reusing paid orphan vm ${orphan.id}`);
       await this.log(deployId, 'adopt_orphan', 'success', `reusing paid vm ${orphan.id}`);
-      return orphan;
+      return { vm: orphan, adopted: true };
     }
 
     const purchaseStartedAt = Date.now();
@@ -195,7 +200,7 @@ export class DeployProcessor {
         itemId: HERMES_ITEM_ID,
         setup: { templateId: HERMES_TEMPLATE_ID, dataCenterId: HERMES_DATA_CENTER_ID },
       });
-      return purchase.virtualMachine;
+      return { vm: purchase.virtualMachine, adopted: false };
     } catch (err) {
       if (errorStatus(err) !== 402) throw err;
       this.logger.warn(`deploy ${deployId}: purchase returned 402 — watching for a late VM`);
@@ -207,7 +212,7 @@ export class DeployProcessor {
         });
       }
       await this.log(deployId, 'adopt_vm', 'success', `adopted late vm ${vm.id} after 402`);
-      return vm;
+      return { vm, adopted: true };
     }
   }
 
@@ -326,21 +331,28 @@ export class DeployProcessor {
     };
   }
 
-  /** Roll back the created VM so a failed deploy never leaves an orphan. */
+  /**
+   * Roll back a freshly purchased VM so a failed deploy never leaves an orphan.
+   * An adopted (already-paid) VM is kept — deleting it would waste money and rob
+   * the next retry of a machine it could reuse via self-heal.
+   */
   private async fail(
     deployId: string,
     telegramId: bigint,
     vmId: number | undefined,
+    adopted: boolean,
     err: unknown,
   ): Promise<void> {
     const reason = err instanceof Error ? err.message : String(err);
     this.logger.error(`deploy ${deployId} failed: ${reason}`);
     await this.log(deployId, 'error', 'error', reason);
 
-    if (vmId !== undefined) {
+    if (vmId !== undefined && !adopted) {
       await this.tryCleanup(deployId, 'cleanup_vm', vmId, () =>
         withRetry(() => this.provisioning.deleteVM(vmId), this.retryOpts()),
       );
+    } else if (vmId !== undefined) {
+      await this.log(deployId, 'cleanup_vm', 'skipped', `kept adopted vm ${vmId} for retry`);
     }
 
     await this.prisma.deploy.update({ where: { id: deployId }, data: { status: 'failed' } });

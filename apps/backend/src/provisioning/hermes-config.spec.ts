@@ -89,6 +89,10 @@ describe('renderComposeFile', () => {
     expect(compose).toContain('"/root/.hermes:/opt/data"');
     expect(compose).toContain(`memory: ${HERMES_MEMORY_LIMIT}`);
     expect(HERMES_MEMORY_LIMIT).toBe('3G');
+    // KVM 1 has a single vCPU — the limit must not exceed it or Docker refuses
+    // to create the container ("range of CPUs is from 0.01 to 1.00").
+    expect(compose).toContain('cpus: "1.0"');
+    expect(compose).not.toContain('cpus: "2.0"');
   });
 
   it('embeds config.yaml as an inline compose config mounted into /opt/data', () => {

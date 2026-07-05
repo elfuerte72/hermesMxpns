@@ -298,6 +298,24 @@ describe('DeployProcessor', () => {
     expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
   });
 
+  it('keeps an adopted VM (does not delete it) when the deploy fails', async () => {
+    provisioning.listVMs.mockResolvedValue([
+      makeVm('running', ['5.5.5.5'], 1806, {
+        plan: 'KVM 1',
+        created_at: new Date().toISOString(),
+      }),
+    ]);
+    provisioning.getDockerProjectContainers.mockResolvedValue([makeContainer('exited')]);
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { status: 'failed' },
+    });
+  });
+
   it('does not adopt a paid VM in another data center', async () => {
     provisioning.listVMs.mockResolvedValue([
       makeVm('running', ['5.5.5.5'], 1806, {

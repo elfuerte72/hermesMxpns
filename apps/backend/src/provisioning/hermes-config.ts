@@ -6,6 +6,8 @@
 
 /** Container memory limit tuned for KVM 1 (4 GB) — leaves headroom for the OS. */
 export const HERMES_MEMORY_LIMIT = '3G';
+/** CPU limit — KVM 1 has a single vCPU, so the container cannot exceed 1.0. */
+export const HERMES_CPU_LIMIT = '1.0';
 /** Host directory that maps to the container's /opt/data. */
 export const HERMES_HOST_DIR = '/root/.hermes';
 
@@ -115,7 +117,7 @@ export function renderComposeFile(p: ComposeFileParams): string {
     '      resources:',
     '        limits:',
     `          memory: ${HERMES_MEMORY_LIMIT}`,
-    '          cpus: "2.0"',
+    `          cpus: "${HERMES_CPU_LIMIT}"`,
     '',
   ].join('\n');
 }
