@@ -28,7 +28,7 @@ const ADOPTABLE_ORPHAN_MAX_AGE_MS = 24 * 60 * 60_000;
  * or deleted deploy is fair game to re-adopt — otherwise a paid machine from a
  * failed attempt is stranded forever and the next retry buys a new one.
  */
-const ACTIVE_DEPLOY_STATUSES = ['pending', 'creating', 'configuring', 'ready'] as const;
+export const ACTIVE_DEPLOY_STATUSES = ['pending', 'creating', 'configuring', 'ready'] as const;
 
 export function isHermesPlan(plan: string | null): boolean {
   return plan !== null && plan.toLowerCase().replace(/\s+/g, '').includes('kvm1');

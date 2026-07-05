@@ -4,7 +4,7 @@ export const STATUS_LABELS: Record<DeployStatus, string> = {
   pending: 'В очереди…',
   creating: 'Создаём сервер…',
   configuring: 'Настраиваем Hermes…',
-  ready: 'Готово!',
+  ready: 'Работает',
   failed: 'Не удалось развернуть',
   deleted: 'Удалён',
 };

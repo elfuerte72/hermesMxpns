@@ -102,7 +102,7 @@ describe('App routing', () => {
     clickButton('Мои агенты');
     await flush();
     expect(container.textContent).toContain('@mybot');
-    expect(container.textContent).toContain('Готово!');
+    expect(container.textContent).toContain('Работает');
 
     clickButton('@mybot');
     await flush();

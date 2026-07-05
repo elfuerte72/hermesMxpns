@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from '../provisioning/provisioning.service';
 import { DeployNotifier } from './deploy-notifier';
+import { ACTIVE_DEPLOY_STATUSES } from './deploy.processor';
 
 export interface TeardownProcessorConfig {
   /** When true, skip real Hostinger deletions (dev has no real resources). */
@@ -36,8 +37,25 @@ export class TeardownProcessor {
 
     if (this.config.dryRun) {
       await this.log(deployId, 'dry_run', 'skipped', 'DRY_RUN — teardown skipped');
-    } else {
-      if (deploy.hostinger_vm_id) {
+    } else if (deploy.hostinger_vm_id) {
+      // Never delete a VM another active deploy still relies on — a shared
+      // machine (e.g. an orphan adopted by a later successful deploy) must
+      // survive teardown of the deploy that no longer owns it.
+      const sharedBy = await this.prisma.deploy.count({
+        where: {
+          hostinger_vm_id: deploy.hostinger_vm_id,
+          id: { not: deployId },
+          status: { in: [...ACTIVE_DEPLOY_STATUSES] },
+        },
+      });
+      if (sharedBy > 0) {
+        await this.log(
+          deployId,
+          'teardown_vm',
+          'skipped',
+          `kept vm ${deploy.hostinger_vm_id} — still used by ${sharedBy} active deploy(s)`,
+        );
+      } else {
         await this.tryCleanup(deployId, 'teardown_vm', deploy.hostinger_vm_id, (id) =>
           this.provisioning.deleteVM(id),
         );

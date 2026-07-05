@@ -2,7 +2,7 @@ import { TeardownProcessor, type TeardownProcessorConfig } from './teardown.proc
 
 describe('TeardownProcessor', () => {
   let prisma: {
-    deploy: { findUnique: jest.Mock; update: jest.Mock };
+    deploy: { findUnique: jest.Mock; update: jest.Mock; count: jest.Mock };
     provisioningLog: { create: jest.Mock };
   };
   let provisioning: { deleteVM: jest.Mock };
@@ -32,6 +32,7 @@ describe('TeardownProcessor', () => {
       deploy: {
         findUnique: jest.fn().mockResolvedValue(makeDeploy()),
         update: jest.fn().mockResolvedValue({}),
+        count: jest.fn().mockResolvedValue(0),
       },
       provisioningLog: { create: jest.fn().mockResolvedValue({}) },
     };
@@ -51,6 +52,25 @@ describe('TeardownProcessor', () => {
       data: { status: 'deleted' },
     });
     expect(notifier.deployDeleted).toHaveBeenCalledWith(55n, 'coolbot');
+  });
+
+  it('keeps the VM when another active deploy still relies on it', async () => {
+    prisma.deploy.count.mockResolvedValue(1);
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(prisma.deploy.count).toHaveBeenCalledWith({
+      where: {
+        hostinger_vm_id: '777',
+        id: { not: 'deploy-1' },
+        status: { in: ['pending', 'creating', 'configuring', 'ready'] },
+      },
+    });
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { status: 'deleted' },
+    });
   });
 
   it('is a no-op for an already-deleted deploy', async () => {
