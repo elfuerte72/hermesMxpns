@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import robot from '../assets/robot.png';
+import logo from '../assets/logo.png';
 import { formatPriceRub } from '../config';
 import { PixelButton } from './ui';
 
@@ -16,10 +16,12 @@ export function MenuScreen({ onCreate, onAbout }: MenuScreenProps): ReactElement
         <span>v1.0</span>
       </div>
 
-      <div className="mt-[9vh] text-center">
-        <img src={robot} alt="Hermes robot" className="animate-bob mx-auto w-[104px]" />
-        <h1 className="mt-3 mb-1 text-[26px] tracking-wider">HERMES</h1>
-        <p className="text-[11px] tracking-[0.14em] text-dim uppercase">Твой ИИ-агент в Telegram</p>
+      <div className="mt-[8vh] text-center">
+        <h1 className="sr-only">Hermes Agent</h1>
+        <img src={logo} alt="Hermes Agent" className="animate-bob mx-auto w-[224px] max-w-[70%]" />
+        <p className="mt-3 text-[11px] tracking-[0.14em] text-dim uppercase">
+          Твой ИИ-агент в Telegram
+        </p>
       </div>
 
       <div className="mt-auto mb-[8vh] flex flex-col gap-3.5">
