@@ -13,8 +13,8 @@ describe('BootstrapController', () => {
 
   it('resolves the caller IP and forwards deployId + token to the service', async () => {
     const req = {
-      headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' },
-      socket: { remoteAddress: '10.0.0.1' },
+      headers: { 'x-forwarded-for': 'spoofed, 203.0.113.7' },
+      socket: { remoteAddress: '172.18.0.2' },
     } as unknown as Request;
 
     await controller.pull('deploy-1', 'tok', req);

@@ -11,16 +11,19 @@ export function normalizeIp(ip: string): string {
 }
 
 /**
- * Resolve the caller's IP for the bootstrap IP check. Prefers the first hop of
- * X-Forwarded-For (backend sits behind HTTPS termination), else the socket
- * address. Returns null when nothing is available.
+ * Resolve the caller's IP for the bootstrap IP check. Uses the LAST hop of
+ * X-Forwarded-For — the entry appended by our own reverse proxy (Traefik/nginx
+ * append the peer address, so earlier entries are client-controlled and
+ * spoofable). Assumes exactly one trusted proxy in front of the backend; with
+ * no proxy the header is absent and the socket address is used.
  */
 export function resolveClientIp(req: IncomingLike): string | null {
   const xff = req.headers['x-forwarded-for'];
-  const headerValue = Array.isArray(xff) ? xff[0] : xff;
+  const headerValue = Array.isArray(xff) ? xff[xff.length - 1] : xff;
   if (headerValue) {
-    const first = headerValue.split(',')[0]?.trim();
-    if (first) return normalizeIp(first);
+    const hops = headerValue.split(',');
+    const last = hops[hops.length - 1]?.trim();
+    if (last) return normalizeIp(last);
   }
   const remote = req.socket?.remoteAddress ?? req.ip;
   return remote ? normalizeIp(remote) : null;

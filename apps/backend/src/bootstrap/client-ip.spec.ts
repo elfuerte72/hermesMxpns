@@ -9,10 +9,26 @@ describe('normalizeIp', () => {
 });
 
 describe('resolveClientIp', () => {
-  it('prefers the first hop of X-Forwarded-For', () => {
+  it('uses the last hop of X-Forwarded-For (appended by the trusted proxy)', () => {
     const req: IncomingLike = {
-      headers: { 'x-forwarded-for': '1.2.3.4, 10.0.0.1' },
-      socket: { remoteAddress: '10.0.0.1' },
+      headers: { 'x-forwarded-for': '1.2.3.4' },
+      socket: { remoteAddress: '172.18.0.2' },
+    };
+    expect(resolveClientIp(req)).toBe('1.2.3.4');
+  });
+
+  it('ignores client-supplied entries prepended before the trusted hop', () => {
+    const req: IncomingLike = {
+      headers: { 'x-forwarded-for': 'spoofed-vm-ip, 1.2.3.4' },
+      socket: { remoteAddress: '172.18.0.2' },
+    };
+    expect(resolveClientIp(req)).toBe('1.2.3.4');
+  });
+
+  it('uses the last header value when the header is repeated', () => {
+    const req: IncomingLike = {
+      headers: { 'x-forwarded-for': ['spoofed-vm-ip', '1.2.3.4'] },
+      socket: { remoteAddress: '172.18.0.2' },
     };
     expect(resolveClientIp(req)).toBe('1.2.3.4');
   });
