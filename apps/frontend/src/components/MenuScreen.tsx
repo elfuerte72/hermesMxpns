@@ -18,7 +18,7 @@ export function MenuScreen({ onCreate, onAbout }: MenuScreenProps): ReactElement
 
       <div className="mt-[8vh] text-center">
         <h1 className="sr-only">Hermes Agent</h1>
-        <img src={logo} alt="Hermes Agent" className="animate-bob mx-auto w-[272px] max-w-[82%]" />
+        <img src={logo} alt="Hermes Agent" className="mx-auto w-[272px] max-w-[82%]" />
         <p className="mt-3 text-[11px] tracking-[0.14em] text-dim uppercase">
           Твой ИИ-агент в Telegram
         </p>

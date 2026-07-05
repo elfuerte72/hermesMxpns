@@ -3,7 +3,7 @@ import type { DeployStatus, DeployView } from '@hermes/shared';
 import { getDeploy } from '../api';
 import { STATUS_LABELS, isTerminal, statusProgress } from '../deploy-status';
 import { hapticImpact, openBotChat } from '../telegram';
-import robot from '../assets/robot.png';
+import logo from '../assets/logo.png';
 import { PixelButton } from './ui';
 
 interface DeployStatusViewProps {
@@ -67,9 +67,9 @@ export function DeployStatusView({ deployId, onReset }: DeployStatusViewProps): 
 
       <div className="mt-4 text-center">
         <img
-          src={robot}
-          alt="Hermes robot"
-          className={`mx-auto w-[104px] ${failed ? 'opacity-60' : 'animate-bob'}`}
+          src={logo}
+          alt="Hermes Agent"
+          className={`mx-auto w-[236px] max-w-[80%] ${failed ? 'opacity-50' : ''}`}
         />
       </div>
 
