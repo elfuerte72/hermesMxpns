@@ -7,6 +7,8 @@ import { SecretsModule } from '../secrets/secrets.module';
 import { SecretsService } from '../secrets/secrets.service';
 import { ValidateBotTokenController } from './validate-bot-token.controller';
 import { TELEGRAM_API_BASE, ValidateBotTokenService } from './validate-bot-token.service';
+import { ValidateLlmKeyController } from './validate-llm-key.controller';
+import { ValidateLlmKeyService } from './validate-llm-key.service';
 import { DeploysController } from './deploys.controller';
 import { DeploysService } from './deploys.service';
 import { BullDeployQueue, DeployQueue } from './deploy-queue';
@@ -14,8 +16,9 @@ import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
 
 @Module({
   imports: [PrismaModule, AuthModule, SecretsModule],
-  controllers: [ValidateBotTokenController, DeploysController],
+  controllers: [ValidateBotTokenController, ValidateLlmKeyController, DeploysController],
   providers: [
+    ValidateLlmKeyService,
     {
       provide: ValidateBotTokenService,
       inject: [PrismaService],

@@ -124,7 +124,8 @@ services:
 ```
 TELEGRAM_BOT_TOKEN=<от клиента>
 TELEGRAM_ALLOWED_USERS=<telegram_id клиента, через запятую>
-<GROQ|GEMINI|OPENROUTER|...>_API_KEY=<LLM-ключ клиента>
+<GROQ|OPENAI|OPENROUTER|...>_API_KEY=<LLM-ключ клиента>
+OPENAI_BASE_URL=<base_url>   # только для провайдеров с key_env=OPENAI_API_KEY (proxyapi, vsegpt), см. §7
 HERMES_DASHBOARD=1
 ```
 
@@ -132,7 +133,7 @@ HERMES_DASHBOARD=1
 
 ```yaml
 custom_providers:
-  - name: <provider> # groq | gemini | openrouter | together | custom
+  - name: <provider> # groq | proxyapi | vsegpt | openrouter | custom
     base_url: <base_url> # из §7
     key_env: <KEY_ENV> # имя env-переменной с ключом
 model:
@@ -160,17 +161,19 @@ Hermes поддерживает несколько `custom_providers` однов
 
 ## 7. Каталог LLM-провайдеров (проверенные base_url)
 
-**Source:** `/nousresearch/hermes-agent` (providers.md, google-gemini guide) + `/openclaw/openclaw` (openrouter.md). Все OpenAI-compatible.
+> ♻️ **Каталог v2 (2026-07-05):** `gemini` и `together` удалены; добавлены `proxyapi` и `vsegpt` — оплата в рублях с карты «Мир», без зарубежной карты. Порядок таблицы = порядок в UI.
 
-| id           | name                          | base_url                                                   | key_env              | default_model                             |
-| ------------ | ----------------------------- | ---------------------------------------------------------- | -------------------- | ----------------------------------------- |
-| `groq`       | Groq (бесплатно)              | `https://api.groq.com/openai/v1`                           | `GROQ_API_KEY`       | `llama-3.3-70b-versatile`                 |
-| `gemini`     | Google Gemini (free tier)     | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY`     | `gemini-1.5-flash`                        |
-| `openrouter` | OpenRouter (есть free models) | `https://openrouter.ai/api/v1`                             | `OPENROUTER_API_KEY` | (выбор клиента)                           |
-| `together`   | Together AI                   | `https://api.together.xyz/v1`                              | `TOGETHER_API_KEY`   | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
-| `custom`     | Свой (OpenAI-compatible)      | (ввод клиента)                                             | `CUSTOM_API_KEY`     | (ввод клиента)                            |
+**Source:** `/nousresearch/hermes-agent` (providers.md, user-guide/configuration). VseGPT проверен эмпирически (2026-07-05): OpenAI-compatible endpoint принимает `Authorization: Bearer` (невалидный Bearer → 403 «Incorrect API key», без хедера → «No API key provided»); tools/stream заявлены в доках (`Docs/API/AddFeatures`). ProxyAPI: Bearer подтверждён докой; заявлена полная совместимость с OpenAI-спецификацией («все методы и форматы идентичны оригинальным от OpenAI»). Все OpenAI-compatible.
 
-Mini App даёт меню выбора; бэкенд подставляет правильный `base_url` + `key_env` в `config.yaml`.
+| id           | name                                  | base_url                          | key_env              | default_model             |
+| ------------ | ------------------------------------- | --------------------------------- | -------------------- | ------------------------- |
+| `groq`       | Groq (бесплатно, без карты)           | `https://api.groq.com/openai/v1`  | `GROQ_API_KEY`       | `llama-3.3-70b-versatile` |
+| `proxyapi`   | ProxyAPI (рубли, карта Мир)           | `https://api.proxyapi.ru/openai/v1` | `OPENAI_API_KEY`   | `gpt-4o-mini`             |
+| `vsegpt`     | VseGPT (рубли)                        | `https://api.vsegpt.ru/v1`        | `OPENAI_API_KEY`     | `openai/gpt-4o-mini`      |
+| `openrouter` | OpenRouter (зарубежная карта/крипта)  | `https://openrouter.ai/api/v1`    | `OPENROUTER_API_KEY` | (выбор клиента)           |
+| `custom`     | Свой (OpenAI-compatible)              | (ввод клиента)                    | `CUSTOM_API_KEY`     | (ввод клиента)            |
+
+Mini App даёт меню выбора; бэкенд подставляет правильный `base_url` + `key_env` в `config.yaml`. Для провайдеров с `key_env=OPENAI_API_KEY` (proxyapi, vsegpt) в project-`.env` дополнительно рендерится `OPENAI_BASE_URL=<base_url>` — Hermes-механика custom OpenAI endpoint: «when `base_url` is set, Hermes ignores the provider and calls that endpoint directly» (user-guide/configuration).
 
 ## 8. Модель данных (Prisma)
 
@@ -197,6 +200,7 @@ Subscription/Payment — phase 2 (billing)
 POST /auth/validate-init            — TMA initData → { user }   (auth)
 GET  /llm-providers                 — каталог провайдеров
 POST /validate-bot-token            — прокси к Telegram getMe → { username, id }
+POST /validate-llm-key              — probe chat/tools/stream → { ok, model, supports_* }   (auth)
 POST /deploys                       — создать деплой → 202 { deploy_id }   (auth)
 GET  /deploys                       — список деплоев юзера   (auth)
 GET  /deploys/:id                   — статус деплоя   (auth)
@@ -361,3 +365,10 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
   6. любой сбой → cleanup `deleteVM` (если создан), `status=failed`, лог в `ProvisioningLog`, notify. `purchaseVM` по-прежнему не ретраится; `createDockerProject`/поллинг — `withRetry` на 429/5xx/сеть.
 - **Выпилено:** `src/bootstrap/**` (pull + client-ip), `src/webhooks/**`, `provisioning/script-generator*`, `deploys/bootstrap-token*`; shared-типы `BootstrapPayload`/`DeployReadyRequest`/`DeployReadyResponse`/`HostingerPostInstallScript`; колонки Deploy `bootstrap_token_hash`/`bootstrap_used_at`/`webhook_secret_hash`/`hostinger_script_id` (миграция `drop_bootstrap_webhook_fields`). Teardown/watchdog чистят только VM. `DeployJobData` = `{deployId}` — секретов и токенов в Redis больше нет.
 - **Trade-off (осознанный):** секреты (project `.env`) проходят через Hostinger API и видны в Docker Manager владельцу аккаунта Hostinger — приемлемо, т.к. оператор и так владеет VPS клиента; зато нет публичных небезопасных эндпойнтов на бэкенде. `BACKEND_URL` остаётся только для бот-вебхука.
+
+## 20. Каталог LLM v2 + POST /validate-llm-key (2026-07-05)
+
+- Каталог v2 (§7): `groq` / `proxyapi` / `vsegpt` / `openrouter` / `custom`; `gemini` и `together` удалены. Для `key_env=OPENAI_API_KEY` рендерер `renderEnvFile` дополнительно пишет `OPENAI_BASE_URL` в project-`.env` (Hermes custom-механика, требует `baseUrl` — иначе throw).
+- `POST /validate-llm-key` (TmaAuthGuard, срез `deploys/validate-llm-key.{dto,service,controller}.ts`): резолв `base_url`+`model` из каталога (для `custom` — из body; `model` обязателен и для провайдеров без default_model, т.е. openrouter). Три probe-запроса к `{base_url}/chat/completions` с `Authorization: Bearer`, таймаут 10с каждый: (1) минимальный чат `max_tokens:1`; (2) tool-call probe (`tools:[function ping]`, `tool_choice:'auto'`, `max_tokens:16`); (3) `stream:true` с чтением первых байт SSE и немедленным обрывом. Hermes требует от endpoint'а streaming и tool calling (user-guide/configuration) — поэтому все три обязательны.
+- Ответы: 200 `{ok:true, model, supports_tools:true, supports_streaming:true}`; 422 `{ok:false, code}` — `invalid_key` (401/403), `no_balance` (402/429), `model_unavailable` (404) по первому probe; `provider_incompatible` + `missing:['tools'|'streaming']`, если probe 2/3 отвергнут HTTP-статусом; 502 `{ok:false, code:'provider_unreachable'}` при сетевых ошибках/таймаутах. Ключ нигде не логируется.
+- Mini App: кнопка «Проверить ключ» в `DeployForm`; сабмит деплоя активируется только после успешной проверки (✓ Ключ рабочий), ошибки мапятся по `code` (в т.ч. «Провайдер не поддерживает функции, нужные агенту»). Поле «Модель» показывается для провайдеров без default_model (openrouter) и custom.

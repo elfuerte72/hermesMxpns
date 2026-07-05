@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, createDeploy, fetchProviders, getDeploy, validateBotToken } from './api';
+import {
+  ApiError,
+  createDeploy,
+  fetchProviders,
+  getDeploy,
+  validateBotToken,
+  validateLlmKey,
+} from './api';
 
 function mockFetch(response: { ok: boolean; status: number; body: unknown }) {
   const fn = vi.fn().mockResolvedValue({
@@ -41,6 +48,47 @@ describe('api client', () => {
     expect(init.method).toBe('POST');
     expect(init.headers.Authorization).toBe('tma INIT');
     expect(JSON.parse(init.body)).toEqual({ bot_token: '123:abc' });
+  });
+
+  it('validateLlmKey POSTs /validate-llm-key with auth and the request body', async () => {
+    const fetchFn = mockFetch({
+      ok: true,
+      status: 200,
+      body: { ok: true, model: 'llama-3.3-70b-versatile', supports_tools: true, supports_streaming: true },
+    });
+    const res = await validateLlmKey({ provider_id: 'groq', api_key: 'sk-x' });
+
+    expect(res).toEqual({
+      ok: true,
+      model: 'llama-3.3-70b-versatile',
+      supports_tools: true,
+      supports_streaming: true,
+    });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/validate-llm-key');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('tma INIT');
+    expect(JSON.parse(init.body)).toEqual({ provider_id: 'groq', api_key: 'sk-x' });
+  });
+
+  it('validateLlmKey errors carry the machine-readable code', async () => {
+    mockFetch({ ok: false, status: 422, body: { ok: false, code: 'invalid_key' } });
+    await expect(validateLlmKey({ provider_id: 'groq', api_key: 'bad' })).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 422,
+      code: 'invalid_key',
+    });
+  });
+
+  it('validateLlmKey surfaces provider_incompatible with its code', async () => {
+    mockFetch({
+      ok: false,
+      status: 422,
+      body: { ok: false, code: 'provider_incompatible', missing: ['tools'] },
+    });
+    await expect(validateLlmKey({ provider_id: 'groq', api_key: 'sk-x' })).rejects.toMatchObject({
+      code: 'provider_incompatible',
+    });
   });
 
   it('createDeploy POSTs /deploys with auth', async () => {

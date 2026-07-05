@@ -7,11 +7,11 @@ describe('LlmProvidersService', () => {
     service = new LlmProvidersService();
   });
 
-  it('returns the full catalog with the documented providers', () => {
+  it('returns the v2 catalog in UI order', () => {
     const list = service.list();
     const ids = list.map((p) => p.id);
 
-    expect(ids).toEqual(['groq', 'gemini', 'openrouter', 'together', 'custom']);
+    expect(ids).toEqual(['groq', 'proxyapi', 'vsegpt', 'openrouter', 'custom']);
     expect(list).toHaveLength(5);
   });
 
@@ -30,7 +30,7 @@ describe('LlmProvidersService', () => {
     const groq = service.find('groq');
     expect(groq).toEqual({
       id: 'groq',
-      name: 'Groq (бесплатно)',
+      name: 'Groq (бесплатно, без карты)',
       base_url: 'https://api.groq.com/openai/v1',
       key_env: 'GROQ_API_KEY',
       default_model: 'llama-3.3-70b-versatile',
@@ -38,10 +38,25 @@ describe('LlmProvidersService', () => {
     });
   });
 
-  it('gemini uses the OpenAI-compatible endpoint', () => {
-    const gemini = service.find('gemini');
-    expect(gemini?.base_url).toBe('https://generativelanguage.googleapis.com/v1beta/openai/');
-    expect(gemini?.key_env).toBe('GEMINI_API_KEY');
+  it('proxyapi uses the Hermes OPENAI_API_KEY + base_url mechanic', () => {
+    const proxyapi = service.find('proxyapi');
+    expect(proxyapi?.name).toBe('ProxyAPI (рубли, карта Мир)');
+    expect(proxyapi?.base_url).toBe('https://api.proxyapi.ru/openai/v1');
+    expect(proxyapi?.key_env).toBe('OPENAI_API_KEY');
+    expect(proxyapi?.default_model).toBe('gpt-4o-mini');
+  });
+
+  it('vsegpt uses the Hermes OPENAI_API_KEY + base_url mechanic', () => {
+    const vsegpt = service.find('vsegpt');
+    expect(vsegpt?.name).toBe('VseGPT (рубли)');
+    expect(vsegpt?.base_url).toBe('https://api.vsegpt.ru/v1');
+    expect(vsegpt?.key_env).toBe('OPENAI_API_KEY');
+    expect(vsegpt?.default_model).toBe('openai/gpt-4o-mini');
+  });
+
+  it('gemini and together are no longer in the catalog', () => {
+    expect(service.find('gemini')).toBeNull();
+    expect(service.find('together')).toBeNull();
   });
 
   it('custom provider has empty base_url and default_model (client-provided)', () => {

@@ -25,6 +25,35 @@ describe('renderEnvFile', () => {
       renderEnvFile({ botToken: '1:a', allowedUserId: '1', keyEnv: 'K', llmKey: 'x\nEVIL=1' }),
     ).toThrow(/newlines/);
   });
+
+  it('adds OPENAI_BASE_URL for providers keyed by OPENAI_API_KEY (Hermes custom mechanic)', () => {
+    const env = renderEnvFile({
+      botToken: '1:a',
+      allowedUserId: '1',
+      keyEnv: 'OPENAI_API_KEY',
+      llmKey: 'sk-proxy',
+      baseUrl: 'https://api.proxyapi.ru/openai/v1',
+    });
+    expect(env).toContain('OPENAI_API_KEY=sk-proxy');
+    expect(env).toContain('OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1');
+  });
+
+  it('does not add OPENAI_BASE_URL for provider-specific key envs', () => {
+    const env = renderEnvFile({
+      botToken: '1:a',
+      allowedUserId: '1',
+      keyEnv: 'GROQ_API_KEY',
+      llmKey: 'sk-groq',
+      baseUrl: 'https://api.groq.com/openai/v1',
+    });
+    expect(env).not.toContain('OPENAI_BASE_URL');
+  });
+
+  it('requires a base url when key_env is OPENAI_API_KEY', () => {
+    expect(() =>
+      renderEnvFile({ botToken: '1:a', allowedUserId: '1', keyEnv: 'OPENAI_API_KEY', llmKey: 'sk' }),
+    ).toThrow(/base url/);
+  });
 });
 
 describe('renderConfigYaml', () => {

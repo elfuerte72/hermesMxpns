@@ -1,14 +1,29 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import type { CreateDeployRequest, LlmProvider } from '@hermes/shared';
-import { ApiError, createDeploy, fetchProviders, validateBotToken } from '../api';
+import { ApiError, createDeploy, fetchProviders, validateBotToken, validateLlmKey } from '../api';
 
 interface DeployFormProps {
   onDeployed: (deployId: string) => void;
 }
 
+const LLM_KEY_ERROR_MESSAGES: Record<string, string> = {
+  invalid_key: 'Ключ не подошёл — провайдер его отклонил',
+  no_balance: 'На ключе нет средств или исчерпан лимит запросов',
+  model_unavailable: 'Модель недоступна на этом провайдере',
+  provider_incompatible: 'Провайдер не поддерживает функции, нужные агенту',
+  provider_unreachable: 'Провайдер сейчас недоступен, попробуйте позже',
+};
+
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   return err instanceof Error ? err.message : 'Что-то пошло не так';
+}
+
+function llmKeyErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code && LLM_KEY_ERROR_MESSAGES[err.code]) {
+    return LLM_KEY_ERROR_MESSAGES[err.code];
+  }
+  return errorMessage(err);
 }
 
 export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
@@ -20,6 +35,8 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
   const [model, setModel] = useState('');
   const [botUsername, setBotUsername] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
+  const [llmKeyOk, setLlmKeyOk] = useState(false);
+  const [checkingKey, setCheckingKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,12 +49,22 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
       .catch((err: unknown) => setError(errorMessage(err)));
   }, []);
 
+  const provider = providers.find((p) => p.id === providerId);
   const isCustom = providerId === 'custom';
+  const needsModel = provider ? provider.default_model === '' : isCustom;
+  const canCheckKey =
+    llmKey.trim().length > 0 &&
+    providerId.length > 0 &&
+    (!isCustom || baseUrl.trim().length > 0) &&
+    (!needsModel || model.trim().length > 0) &&
+    !checkingKey;
   const canSubmit =
     botToken.trim().length > 0 &&
     providerId.length > 0 &&
     llmKey.trim().length > 0 &&
-    (!isCustom || (baseUrl.trim().length > 0 && model.trim().length > 0)) &&
+    llmKeyOk &&
+    (!isCustom || baseUrl.trim().length > 0) &&
+    (!needsModel || model.trim().length > 0) &&
     !submitting;
 
   async function handleValidate(): Promise<void> {
@@ -54,6 +81,25 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
     }
   }
 
+  async function handleValidateLlmKey(): Promise<void> {
+    setCheckingKey(true);
+    setError(null);
+    setLlmKeyOk(false);
+    try {
+      await validateLlmKey({
+        provider_id: providerId,
+        api_key: llmKey.trim(),
+        ...(isCustom ? { base_url: baseUrl.trim() } : {}),
+        ...(model.trim() ? { model: model.trim() } : {}),
+      });
+      setLlmKeyOk(true);
+    } catch (err) {
+      setError(llmKeyErrorMessage(err));
+    } finally {
+      setCheckingKey(false);
+    }
+  }
+
   async function handleSubmit(): Promise<void> {
     setSubmitting(true);
     setError(null);
@@ -62,7 +108,8 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
         bot_token: botToken.trim(),
         llm_provider: providerId,
         llm_key: llmKey.trim(),
-        ...(isCustom ? { llm_base_url: baseUrl.trim(), llm_model: model.trim() } : {}),
+        ...(isCustom ? { llm_base_url: baseUrl.trim() } : {}),
+        ...(model.trim() ? { llm_model: model.trim() } : {}),
       };
       const { deploy_id } = await createDeploy(body);
       onDeployed(deploy_id);
@@ -117,7 +164,10 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
         LLM-провайдер
         <select
           value={providerId}
-          onChange={(e) => setProviderId(e.target.value)}
+          onChange={(e) => {
+            setProviderId(e.target.value);
+            setLlmKeyOk(false);
+          }}
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
         >
           {providers.map((p) => (
@@ -129,40 +179,61 @@ export function DeployForm({ onDeployed }: DeployFormProps): ReactElement {
       </label>
 
       {isCustom && (
-        <>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Base URL провайдера
-            <input
-              type="url"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Модель
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="model-name"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-        </>
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          Base URL провайдера
+          <input
+            type="url"
+            value={baseUrl}
+            onChange={(e) => {
+              setBaseUrl(e.target.value);
+              setLlmKeyOk(false);
+            }}
+            placeholder="https://api.example.com/v1"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+          />
+        </label>
+      )}
+
+      {needsModel && (
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          Модель
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => {
+              setModel(e.target.value);
+              setLlmKeyOk(false);
+            }}
+            placeholder="openai/gpt-4o-mini"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+          />
+        </label>
       )}
 
       <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
         Ключ LLM-провайдера
-        <input
-          type="password"
-          value={llmKey}
-          onChange={(e) => setLlmKey(e.target.value)}
-          placeholder="sk-…"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
-          autoComplete="off"
-        />
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={llmKey}
+            onChange={(e) => {
+              setLlmKey(e.target.value);
+              setLlmKeyOk(false);
+            }}
+            placeholder="sk-…"
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            onClick={handleValidateLlmKey}
+            disabled={!canCheckKey}
+            className="shrink-0 rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:opacity-50"
+          >
+            {checkingKey ? '…' : 'Проверить ключ'}
+          </button>
+        </div>
+        {llmKeyOk && <span className="text-xs font-normal text-green-600">✓ Ключ рабочий</span>}
       </label>
 
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}

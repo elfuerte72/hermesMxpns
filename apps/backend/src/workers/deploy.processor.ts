@@ -104,6 +104,7 @@ export class DeployProcessor {
         allowedUserId: deploy.user_id.toString(),
         keyEnv: provider.key_env,
         llmKey: this.secrets.decrypt(deploy.llm_key_enc),
+        baseUrl: deploy.llm_base_url ?? provider.base_url,
       });
       const configYaml = renderConfigYaml({
         provider: provider.id,

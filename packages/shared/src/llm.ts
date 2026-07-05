@@ -10,35 +10,35 @@ export interface LlmProvider {
 export const LLM_PROVIDERS: readonly LlmProvider[] = [
   {
     id: 'groq',
-    name: 'Groq (бесплатно)',
+    name: 'Groq (бесплатно, без карты)',
     base_url: 'https://api.groq.com/openai/v1',
     key_env: 'GROQ_API_KEY',
     default_model: 'llama-3.3-70b-versatile',
     docs_url: 'https://console.groq.com/docs/api-keys',
   },
   {
-    id: 'gemini',
-    name: 'Google Gemini (free tier)',
-    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    key_env: 'GEMINI_API_KEY',
-    default_model: 'gemini-1.5-flash',
-    docs_url: 'https://ai.google.dev/gemini-api/docs/api-key',
+    id: 'proxyapi',
+    name: 'ProxyAPI (рубли, карта Мир)',
+    base_url: 'https://api.proxyapi.ru/openai/v1',
+    key_env: 'OPENAI_API_KEY',
+    default_model: 'gpt-4o-mini',
+    docs_url: 'https://proxyapi.ru/docs',
+  },
+  {
+    id: 'vsegpt',
+    name: 'VseGPT (рубли)',
+    base_url: 'https://api.vsegpt.ru/v1',
+    key_env: 'OPENAI_API_KEY',
+    default_model: 'openai/gpt-4o-mini',
+    docs_url: 'https://vsegpt.ru/Docs/API',
   },
   {
     id: 'openrouter',
-    name: 'OpenRouter (есть free models)',
+    name: 'OpenRouter (зарубежная карта/крипта)',
     base_url: 'https://openrouter.ai/api/v1',
     key_env: 'OPENROUTER_API_KEY',
     default_model: '',
     docs_url: 'https://openrouter.ai/keys',
-  },
-  {
-    id: 'together',
-    name: 'Together AI',
-    base_url: 'https://api.together.xyz/v1',
-    key_env: 'TOGETHER_API_KEY',
-    default_model: 'meta-llama/Llama-3.1-70B-Instruct-Turbo',
-    docs_url: 'https://docs.together.ai/docs/api-keys',
   },
   {
     id: 'custom',
@@ -54,4 +54,36 @@ export type LlmProviderId = (typeof LLM_PROVIDERS)[number]['id'];
 
 export function isKnownLlmProvider(id: string): id is LlmProviderId {
   return LLM_PROVIDERS.some((p) => p.id === id);
+}
+
+export const VALIDATE_LLM_KEY_ERROR_CODES = [
+  'invalid_key',
+  'no_balance',
+  'model_unavailable',
+  'provider_incompatible',
+  'provider_unreachable',
+] as const;
+
+export type ValidateLlmKeyErrorCode = (typeof VALIDATE_LLM_KEY_ERROR_CODES)[number];
+
+export type ValidateLlmKeyMissingFeature = 'tools' | 'streaming';
+
+export interface ValidateLlmKeyRequest {
+  provider_id: string;
+  api_key: string;
+  base_url?: string;
+  model?: string;
+}
+
+export interface ValidateLlmKeyOkResponse {
+  ok: true;
+  model: string;
+  supports_tools: boolean;
+  supports_streaming: boolean;
+}
+
+export interface ValidateLlmKeyErrorResponse {
+  ok: false;
+  code: ValidateLlmKeyErrorCode;
+  missing?: ValidateLlmKeyMissingFeature[];
 }

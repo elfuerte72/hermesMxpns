@@ -16,6 +16,7 @@ export interface EnvFileParams {
   /** Provider-specific env var name, e.g. GROQ_API_KEY. */
   keyEnv: string;
   llmKey: string;
+  baseUrl?: string;
 }
 
 export interface ConfigYamlParams {
@@ -43,13 +44,20 @@ export function renderEnvFile(p: EnvFileParams): string {
   assertSingleLine('allowed user id', p.allowedUserId);
   assertSingleLine('key_env', p.keyEnv);
   assertSingleLine('llm key', p.llmKey);
-  return [
+  const lines = [
     `TELEGRAM_BOT_TOKEN=${p.botToken}`,
     `TELEGRAM_ALLOWED_USERS=${p.allowedUserId}`,
     `${p.keyEnv}=${p.llmKey}`,
-    'HERMES_DASHBOARD=1',
-    '',
-  ].join('\n');
+  ];
+  if (p.keyEnv === 'OPENAI_API_KEY') {
+    if (!p.baseUrl) {
+      throw new Error('base url is required when key_env is OPENAI_API_KEY');
+    }
+    assertSingleLine('base url', p.baseUrl);
+    lines.push(`OPENAI_BASE_URL=${p.baseUrl}`);
+  }
+  lines.push('HERMES_DASHBOARD=1', '');
+  return lines.join('\n');
 }
 
 /** Render config.yaml — provider wiring (§7), mounted to /opt/data/config.yaml. */

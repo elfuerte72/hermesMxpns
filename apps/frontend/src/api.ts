@@ -4,6 +4,8 @@ import type {
   DeployView,
   LlmProvider,
   ValidateBotTokenResponse,
+  ValidateLlmKeyOkResponse,
+  ValidateLlmKeyRequest,
 } from '@hermes/shared';
 import { buildTmaAuthHeader } from '@hermes/shared';
 import { getInitData } from './telegram';
@@ -14,6 +16,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code: string | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -41,24 +44,32 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    throw new ApiError(res.status, await errorMessage(res));
+    const { message, code } = await errorInfo(res);
+    throw new ApiError(res.status, message, code);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-async function errorMessage(res: Response): Promise<string> {
+async function errorInfo(res: Response): Promise<{ message: string; code: string | null }> {
+  let message: string | null = null;
+  let code: string | null = null;
   try {
     const body: unknown = await res.json();
-    if (body && typeof body === 'object' && 'message' in body) {
-      const msg = (body as { message: unknown }).message;
-      if (typeof msg === 'string') return msg;
-      if (Array.isArray(msg)) return msg.join(', ');
+    if (body && typeof body === 'object') {
+      if ('code' in body && typeof (body as { code: unknown }).code === 'string') {
+        code = (body as { code: string }).code;
+      }
+      if ('message' in body) {
+        const msg = (body as { message: unknown }).message;
+        if (typeof msg === 'string') message = msg;
+        else if (Array.isArray(msg)) message = msg.join(', ');
+      }
     }
   } catch {
     // fall through to status text
   }
-  return res.statusText || `Request failed (${res.status})`;
+  return { message: message ?? (res.statusText || `Request failed (${res.status})`), code };
 }
 
 export function fetchProviders(): Promise<LlmProvider[]> {
@@ -69,6 +80,14 @@ export function validateBotToken(botToken: string): Promise<ValidateBotTokenResp
   return request<ValidateBotTokenResponse>('/validate-bot-token', {
     method: 'POST',
     body: { bot_token: botToken },
+    auth: true,
+  });
+}
+
+export function validateLlmKey(body: ValidateLlmKeyRequest): Promise<ValidateLlmKeyOkResponse> {
+  return request<ValidateLlmKeyOkResponse>('/validate-llm-key', {
+    method: 'POST',
+    body,
     auth: true,
   });
 }

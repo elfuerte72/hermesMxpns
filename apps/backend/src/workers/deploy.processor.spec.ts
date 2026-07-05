@@ -157,6 +157,16 @@ describe('DeployProcessor', () => {
     expect(compose).toContain('key_env: "GROQ_API_KEY"');
   });
 
+  it('renders OPENAI_BASE_URL in the project env for OPENAI_API_KEY providers', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(makeDeployRow({ llm_provider: 'proxyapi' }));
+
+    await makeProcessor().process('deploy-1');
+
+    const env = provisioning.createDockerProject.mock.calls[0][3];
+    expect(env).toContain('OPENAI_API_KEY=sk-groq');
+    expect(env).toContain('OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1');
+  });
+
   it('uses the deploy llm_base_url/llm_model overrides for the custom provider', async () => {
     prisma.deploy.findUnique.mockResolvedValue(
       makeDeployRow({
