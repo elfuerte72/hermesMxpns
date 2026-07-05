@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthModule } from '../auth/auth.module';
 import { SecretsModule } from '../secrets/secrets.module';
 import { SecretsService } from '../secrets/secrets.service';
+import { ProvisioningModule } from '../provisioning/provisioning.module';
+import { ProvisioningService } from '../provisioning/provisioning.service';
 import { ValidateBotTokenController } from './validate-bot-token.controller';
 import { TELEGRAM_API_BASE, ValidateBotTokenService } from './validate-bot-token.service';
 import { ValidateLlmKeyController } from './validate-llm-key.controller';
@@ -15,7 +17,7 @@ import { BullDeployQueue, DeployQueue } from './deploy-queue';
 import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
 
 @Module({
-  imports: [PrismaModule, AuthModule, SecretsModule],
+  imports: [PrismaModule, AuthModule, SecretsModule, ProvisioningModule],
   controllers: [ValidateBotTokenController, ValidateLlmKeyController, DeploysController],
   providers: [
     ValidateLlmKeyService,
@@ -38,14 +40,33 @@ import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
     },
     {
       provide: DeploysService,
-      inject: [PrismaService, SecretsService, ValidateBotTokenService, DeployQueue, TeardownQueue],
+      inject: [
+        PrismaService,
+        SecretsService,
+        ValidateBotTokenService,
+        DeployQueue,
+        TeardownQueue,
+        ProvisioningService,
+        ValidateLlmKeyService,
+      ],
       useFactory: (
         prisma: PrismaService,
         secrets: SecretsService,
         validateBotToken: ValidateBotTokenService,
         queue: DeployQueue,
         teardownQueue: TeardownQueue,
-      ) => new DeploysService(prisma, secrets, validateBotToken, queue, teardownQueue),
+        provisioning: ProvisioningService,
+        validateLlmKey: ValidateLlmKeyService,
+      ) =>
+        new DeploysService(
+          prisma,
+          secrets,
+          validateBotToken,
+          queue,
+          teardownQueue,
+          provisioning,
+          validateLlmKey,
+        ),
     },
   ],
 })

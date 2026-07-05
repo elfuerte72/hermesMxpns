@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   createDeploy,
+  deleteDeploy,
   fetchProviders,
   getDeploy,
+  listDeploys,
+  restartDeploy,
+  updateLlmKey,
   validateBotToken,
   validateLlmKey,
 } from './api';
@@ -107,6 +111,58 @@ describe('api client', () => {
 
     expect(view).toMatchObject({ id: 'd1', status: 'ready' });
     expect(fetchFn.mock.calls[0][0]).toBe('/deploys/d1');
+  });
+
+  it('listDeploys GETs /deploys with auth', async () => {
+    const fetchFn = mockFetch({ ok: true, status: 200, body: [{ id: 'd1' }] });
+    const rows = await listDeploys();
+
+    expect(rows).toEqual([{ id: 'd1' }]);
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/deploys');
+    expect(init.method).toBe('GET');
+    expect(init.headers.Authorization).toBe('tma INIT');
+  });
+
+  it('restartDeploy POSTs /deploys/:id/restart with auth', async () => {
+    const fetchFn = mockFetch({ ok: true, status: 202, body: { ok: true } });
+    const res = await restartDeploy('d1');
+
+    expect(res).toEqual({ ok: true });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/deploys/d1/restart');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('tma INIT');
+  });
+
+  it('updateLlmKey PATCHes /deploys/:id/llm-key with auth and body', async () => {
+    const fetchFn = mockFetch({ ok: true, status: 200, body: { ok: true } });
+    const res = await updateLlmKey('d1', { provider_id: 'groq', api_key: 'sk-new' });
+
+    expect(res).toEqual({ ok: true });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/deploys/d1/llm-key');
+    expect(init.method).toBe('PATCH');
+    expect(init.headers.Authorization).toBe('tma INIT');
+    expect(JSON.parse(init.body)).toEqual({ provider_id: 'groq', api_key: 'sk-new' });
+  });
+
+  it('updateLlmKey surfaces the server error code (422 invalid_key)', async () => {
+    mockFetch({ ok: false, status: 422, body: { ok: false, code: 'invalid_key' } });
+    await expect(
+      updateLlmKey('d1', { provider_id: 'groq', api_key: 'bad' }),
+    ).rejects.toMatchObject({ status: 422, code: 'invalid_key' });
+  });
+
+  it('deleteDeploy DELETEs /deploys/:id with auth', async () => {
+    const fetchFn = mockFetch({ ok: true, status: 202, body: { id: 'd1', status: 'ready' } });
+    const res = await deleteDeploy('d1');
+
+    expect(res).toMatchObject({ id: 'd1' });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/deploys/d1');
+    expect(init.method).toBe('DELETE');
+    expect(init.headers.Authorization).toBe('tma INIT');
   });
 
   it('throws ApiError carrying the status and server message', async () => {

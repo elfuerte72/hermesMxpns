@@ -42,6 +42,12 @@ function clickButton(text: string): void {
   });
 }
 
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 describe('App routing', () => {
   it('renders the game menu by default', () => {
     renderApp();
@@ -66,6 +72,42 @@ describe('App routing', () => {
     expect(container.textContent).toContain('Nous Research');
     clickButton('◄ НАЗАД');
     expect(container.textContent).toContain('Твой ИИ-агент в Telegram');
+  });
+
+  it('navigates menu → agents list → agent detail', async () => {
+    const deployRow = {
+      id: 'd-1',
+      agent: 'hermes',
+      bot_username: 'mybot',
+      llm_provider: 'groq',
+      status: 'ready',
+      vm_ip: '1.2.3.4',
+      created_at: '2026-07-04T10:00:00Z',
+      updated_at: '2026-07-04T10:00:00Z',
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        const body = url === '/deploys' ? [deployRow] : deployRow;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => body,
+        });
+      }),
+    );
+
+    renderApp();
+    clickButton('Мои агенты');
+    await flush();
+    expect(container.textContent).toContain('@mybot');
+    expect(container.textContent).toContain('Готово!');
+
+    clickButton('@mybot');
+    await flush();
+    expect(container.textContent).toContain('Перезапустить агента');
+    expect(container.textContent).toContain('Удалить агента');
   });
 
   it('fires a light haptic impact on screen change', () => {

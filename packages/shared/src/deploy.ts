@@ -35,3 +35,22 @@ export interface DeployView {
   created_at: string;
   updated_at: string;
 }
+
+/** Response of POST /deploys/:id/restart. */
+export interface RestartResponse {
+  ok: true;
+}
+
+/** Body of PATCH /deploys/:id/llm-key — swap the agent's LLM provider/key. */
+export interface UpdateLlmKeyRequest {
+  provider_id: string;
+  api_key: string;
+  /** Required for the `custom` provider and providers without a default model. */
+  base_url?: string;
+  model?: string;
+}
+
+/** Response of PATCH /deploys/:id/llm-key. */
+export interface UpdateLlmKeyResponse {
+  ok: true;
+}

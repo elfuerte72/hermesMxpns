@@ -10,6 +10,8 @@ describe('DeploysController', () => {
     list: jest.Mock;
     getById: jest.Mock;
     requestTeardown: jest.Mock;
+    restart: jest.Mock;
+    updateLlmKey: jest.Mock;
   };
 
   beforeEach(() => {
@@ -18,6 +20,8 @@ describe('DeploysController', () => {
       list: jest.fn(),
       getById: jest.fn(),
       requestTeardown: jest.fn(),
+      restart: jest.fn(),
+      updateLlmKey: jest.fn(),
     };
     controller = new DeploysController(service as unknown as DeploysService);
   });
@@ -55,5 +59,22 @@ describe('DeploysController', () => {
     const result = await controller.teardown(user, 'd-1');
     expect(service.requestTeardown).toHaveBeenCalledWith(user, 'd-1');
     expect(result).toEqual({ id: 'd-1', status: 'ready' });
+  });
+
+  it('POST /deploys/:id/restart delegates to restart', async () => {
+    const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
+    service.restart.mockResolvedValue({ ok: true });
+    const result = await controller.restart(user, 'd-1');
+    expect(service.restart).toHaveBeenCalledWith(user, 'd-1');
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('PATCH /deploys/:id/llm-key delegates to updateLlmKey', async () => {
+    const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
+    const dto = { provider_id: 'groq', api_key: 'sk-x' };
+    service.updateLlmKey.mockResolvedValue({ ok: true });
+    const result = await controller.updateLlmKey(user, 'd-1', dto);
+    expect(service.updateLlmKey).toHaveBeenCalledWith(user, 'd-1', dto);
+    expect(result).toEqual({ ok: true });
   });
 });

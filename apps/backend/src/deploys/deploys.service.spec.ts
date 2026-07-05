@@ -16,12 +16,20 @@ const TEST_KEY = 'a'.repeat(64);
 describe('DeploysService', () => {
   let prisma: {
     user: { upsert: jest.Mock };
-    deploy: { create: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
+    deploy: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
+    provisioningLog: { create: jest.Mock };
   };
   let secrets: SecretsService;
   let validateBotToken: { validate: jest.Mock };
   let queue: { enqueueDeploy: jest.Mock };
   let teardownQueue: { enqueueTeardown: jest.Mock };
+  let provisioning: { restartDockerProject: jest.Mock; updateDockerProject: jest.Mock };
+  let validateLlmKey: { validate: jest.Mock };
   let service: DeploysService;
 
   beforeEach(() => {
@@ -31,18 +39,27 @@ describe('DeploysService', () => {
         create: jest.fn().mockResolvedValue({ id: 'deploy-1' }),
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue(undefined),
       },
+      provisioningLog: { create: jest.fn().mockResolvedValue(undefined) },
     };
     secrets = new SecretsService(TEST_KEY);
     validateBotToken = { validate: jest.fn().mockResolvedValue({ username: 'mybot', id: 7 }) };
     queue = { enqueueDeploy: jest.fn().mockResolvedValue(undefined) };
     teardownQueue = { enqueueTeardown: jest.fn().mockResolvedValue(undefined) };
+    provisioning = {
+      restartDockerProject: jest.fn().mockResolvedValue(undefined),
+      updateDockerProject: jest.fn().mockResolvedValue(undefined),
+    };
+    validateLlmKey = { validate: jest.fn().mockResolvedValue({ ok: true }) };
     service = new DeploysService(
       prisma as never,
       secrets,
       validateBotToken as never,
       queue as never,
       teardownQueue as never,
+      provisioning as never,
+      validateLlmKey as never,
     );
   });
 
@@ -130,6 +147,9 @@ describe('DeploysService', () => {
     llm_provider: 'groq',
     status: 'ready',
     vm_ip: '1.2.3.4',
+    hostinger_vm_id: '777',
+    llm_base_url: null,
+    llm_model: null,
     created_at: new Date('2026-07-04T10:00:00Z'),
     updated_at: new Date('2026-07-04T10:05:00Z'),
     // Secret columns that must NOT appear in the view:
@@ -201,5 +221,90 @@ describe('DeploysService', () => {
       NotFoundException,
     );
     expect(teardownQueue.enqueueTeardown).not.toHaveBeenCalled();
+  });
+
+  describe('restart', () => {
+    it('restarts the docker project of an owned, ready deploy and logs it', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(dbRow);
+
+      const result = await service.restart(USER, 'deploy-1');
+
+      expect(result).toEqual({ ok: true });
+      expect(provisioning.restartDockerProject).toHaveBeenCalledWith(777, 'hermes-deploy-1');
+      expect(prisma.provisioningLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ deploy_id: 'deploy-1', step: 'restart', status: 'success' }),
+      });
+    });
+
+    it('404s restart for a deploy owned by another user', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, user_id: 99999n });
+      await expect(service.restart(USER, 'deploy-1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(provisioning.restartDockerProject).not.toHaveBeenCalled();
+    });
+
+    it('409s restart when the deploy is not ready', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, status: 'configuring' });
+      await expect(service.restart(USER, 'deploy-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(provisioning.restartDockerProject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateLlmKey', () => {
+    const KEY_DTO = { provider_id: 'groq', api_key: 'sk-new' };
+    // A ready deploy row with a genuinely-encrypted bot token so the re-render decrypts.
+    function readyRow() {
+      return { ...dbRow, bot_token_enc: secrets.encrypt('123456:botsecret') };
+    }
+
+    it('validates the key, re-encrypts it, updates the row and re-pushes the project', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(readyRow());
+
+      const result = await service.updateLlmKey(USER, 'deploy-1', KEY_DTO);
+
+      expect(result).toEqual({ ok: true });
+      expect(validateLlmKey.validate).toHaveBeenCalledWith(KEY_DTO);
+
+      const updateData = prisma.deploy.update.mock.calls[0][0].data;
+      expect(updateData.llm_provider).toBe('groq');
+      expect(secrets.decrypt(updateData.llm_key_enc)).toBe('sk-new');
+
+      expect(provisioning.updateDockerProject).toHaveBeenCalledTimes(1);
+      const [vmId, projectName, compose, env] = provisioning.updateDockerProject.mock.calls[0];
+      expect(vmId).toBe(777);
+      expect(projectName).toBe('hermes-deploy-1');
+      expect(compose).toContain('nousresearch/hermes-agent');
+      expect(env).toContain('GROQ_API_KEY=sk-new');
+      // The plaintext key never reaches a provisioning log message.
+      const logMessage = prisma.provisioningLog.create.mock.calls[0][0].data.message;
+      expect(logMessage).not.toContain('sk-new');
+    });
+
+    it('422s and does not touch the DB or VM when the key is invalid', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(readyRow());
+      validateLlmKey.validate.mockRejectedValue(new UnprocessableEntityException());
+
+      await expect(service.updateLlmKey(USER, 'deploy-1', KEY_DTO)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(prisma.deploy.update).not.toHaveBeenCalled();
+      expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
+    });
+
+    it('404s for a deploy owned by another user (no key probe)', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...readyRow(), user_id: 99999n });
+      await expect(service.updateLlmKey(USER, 'deploy-1', KEY_DTO)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(validateLlmKey.validate).not.toHaveBeenCalled();
+    });
+
+    it('409s when the deploy is not ready', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...readyRow(), status: 'configuring' });
+      await expect(service.updateLlmKey(USER, 'deploy-1', KEY_DTO)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(validateLlmKey.validate).not.toHaveBeenCalled();
+      expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
+    });
   });
 });

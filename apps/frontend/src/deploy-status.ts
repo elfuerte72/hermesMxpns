@@ -9,6 +9,16 @@ export const STATUS_LABELS: Record<DeployStatus, string> = {
   deleted: 'Удалён',
 };
 
+/** Text-colour token per status for compact badges (see index.css @theme). */
+export const STATUS_BADGE_CLASS: Record<DeployStatus, string> = {
+  pending: 'text-accent',
+  creating: 'text-accent',
+  configuring: 'text-accent',
+  ready: 'text-ok',
+  failed: 'text-alarm',
+  deleted: 'text-dim',
+};
+
 const TERMINAL_STATUSES: readonly DeployStatus[] = ['ready', 'failed', 'deleted'];
 const PROGRESS_ORDER: readonly DeployStatus[] = ['pending', 'creating', 'configuring', 'ready'];
 

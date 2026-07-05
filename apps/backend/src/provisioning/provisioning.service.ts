@@ -141,6 +141,19 @@ export class ProvisioningService {
     await this.dockerApi.restartProjectV1(vmId, projectName);
   }
 
+  async updateDockerProject(
+    vmId: number,
+    projectName: string,
+    composeYaml: string,
+    envContent: string,
+  ): Promise<void> {
+    await this.dockerApi.createNewProjectV1(vmId, {
+      project_name: projectName,
+      content: composeYaml,
+      environment: envContent,
+    });
+  }
+
   async deleteVM(id: number): Promise<void> {
     await axios.delete(`${HOSTINGER_BASE_URL}${VM_PATH}/${id}`, {
       headers: { Authorization: `Bearer ${this.accessToken}` },

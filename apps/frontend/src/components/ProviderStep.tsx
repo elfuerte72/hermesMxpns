@@ -10,7 +10,7 @@ interface ProviderStepProps {
   onDeployed: (deployId: string) => void;
 }
 
-const PROVIDER_META: Record<string, { label: string; note: string }> = {
+export const PROVIDER_META: Record<string, { label: string; note: string }> = {
   groq: { label: 'GROQ', note: 'бесплатно · без карты' },
   proxyapi: { label: 'PROXYAPI', note: 'рубли · карта МИР' },
   vsegpt: { label: 'VSEGPT', note: 'рубли' },
@@ -18,7 +18,7 @@ const PROVIDER_META: Record<string, { label: string; note: string }> = {
   custom: { label: 'СВОЙ API', note: 'OpenAI-compatible' },
 };
 
-function providerMeta(p: LlmProvider): { label: string; note: string } {
+export function providerMeta(p: LlmProvider): { label: string; note: string } {
   return PROVIDER_META[p.id] ?? { label: p.id.toUpperCase(), note: p.name };
 }
 

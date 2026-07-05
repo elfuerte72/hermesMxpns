@@ -3,6 +3,9 @@ import type {
   CreateDeployResponse,
   DeployView,
   LlmProvider,
+  RestartResponse,
+  UpdateLlmKeyRequest,
+  UpdateLlmKeyResponse,
   ValidateBotTokenResponse,
   ValidateLlmKeyOkResponse,
   ValidateLlmKeyRequest,
@@ -98,4 +101,24 @@ export function createDeploy(body: CreateDeployRequest): Promise<CreateDeployRes
 
 export function getDeploy(id: string): Promise<DeployView> {
   return request<DeployView>(`/deploys/${id}`, { auth: true });
+}
+
+export function listDeploys(): Promise<DeployView[]> {
+  return request<DeployView[]>('/deploys', { auth: true });
+}
+
+export function restartDeploy(id: string): Promise<RestartResponse> {
+  return request<RestartResponse>(`/deploys/${id}/restart`, { method: 'POST', auth: true });
+}
+
+export function updateLlmKey(id: string, body: UpdateLlmKeyRequest): Promise<UpdateLlmKeyResponse> {
+  return request<UpdateLlmKeyResponse>(`/deploys/${id}/llm-key`, {
+    method: 'PATCH',
+    body,
+    auth: true,
+  });
+}
+
+export function deleteDeploy(id: string): Promise<DeployView> {
+  return request<DeployView>(`/deploys/${id}`, { method: 'DELETE', auth: true });
 }

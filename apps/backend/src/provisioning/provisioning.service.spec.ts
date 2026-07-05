@@ -32,6 +32,7 @@ describe('ProvisioningService', () => {
     getActionsV1: jest.fn(),
     createNewProjectV1: jest.fn(),
     getProjectContainersV1: jest.fn(),
+    restartProjectV1: jest.fn(),
   };
 
   beforeEach(() => {
@@ -47,6 +48,7 @@ describe('ProvisioningService', () => {
     asMock(VPSDockerManagerApi).mockImplementation(() => ({
       createNewProjectV1: api.createNewProjectV1,
       getProjectContainersV1: api.getProjectContainersV1,
+      restartProjectV1: api.restartProjectV1,
     }));
     asMock(VPSVirtualMachineApi).mockImplementation(() => ({
       purchaseNewVirtualMachineV1: api.purchaseNewVirtualMachineV1,
@@ -125,6 +127,26 @@ describe('ProvisioningService', () => {
       content: 'services: {}',
       environment: 'A=1\n',
     });
+  });
+
+  it('updateDockerProject re-pushes the project via createNewProjectV1 (overwrite)', async () => {
+    api.createNewProjectV1.mockResolvedValue({ data: { id: 2 } });
+
+    await svc.updateDockerProject(123, 'hermes-deploy-1', 'services: {}', 'A=2\n');
+
+    expect(api.createNewProjectV1).toHaveBeenCalledWith(123, {
+      project_name: 'hermes-deploy-1',
+      content: 'services: {}',
+      environment: 'A=2\n',
+    });
+  });
+
+  it('restartDockerProject calls restartProjectV1 with the vm id and project name', async () => {
+    api.restartProjectV1.mockResolvedValue({ data: { id: 3 } });
+
+    await svc.restartDockerProject(123, 'hermes-deploy-1');
+
+    expect(api.restartProjectV1).toHaveBeenCalledWith(123, 'hermes-deploy-1');
   });
 
   it('getDockerProjectContainers maps container state and health', async () => {

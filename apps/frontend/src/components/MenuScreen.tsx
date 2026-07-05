@@ -5,10 +5,11 @@ import { PixelButton } from './ui';
 
 interface MenuScreenProps {
   onCreate: () => void;
+  onAgents: () => void;
   onAbout: () => void;
 }
 
-export function MenuScreen({ onCreate, onAbout }: MenuScreenProps): ReactElement {
+export function MenuScreen({ onCreate, onAgents, onAbout }: MenuScreenProps): ReactElement {
   return (
     <section className="flex flex-1 flex-col gap-5">
       <div className="flex justify-between text-[10px] tracking-[0.2em] text-dim uppercase">
@@ -27,6 +28,9 @@ export function MenuScreen({ onCreate, onAbout }: MenuScreenProps): ReactElement
       <div className="mt-auto mb-[8vh] flex flex-col gap-3.5">
         <PixelButton variant="accent" onClick={onCreate}>
           ▶ Создать агента
+        </PixelButton>
+        <PixelButton variant="outline" onClick={onAgents}>
+          Мои агенты
         </PixelButton>
         <PixelButton onClick={onAbout}>Об агенте</PixelButton>
         <p className="text-center text-[9px] leading-relaxed text-dim">
