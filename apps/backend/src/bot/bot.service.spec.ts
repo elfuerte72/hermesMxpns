@@ -1,5 +1,12 @@
 import { Bot, InlineKeyboard } from 'grammy';
-import { BotService } from './bot.service';
+import {
+  BOT_COMMANDS,
+  BOT_DESCRIPTION,
+  BOT_SHORT_DESCRIPTION,
+  BotService,
+  HERMES_GITHUB_URL,
+  HERMES_SITE_URL,
+} from './bot.service';
 
 const MINI_APP_URL = 'https://mini.example.com';
 const BACKEND_URL = 'https://backend.example.com';
@@ -11,7 +18,12 @@ function makeMockBot(token = 'test-bot-token') {
     start: jest.fn().mockResolvedValue(undefined),
     stop: jest.fn().mockResolvedValue(undefined),
     isRunning: jest.fn().mockReturnValue(false),
-    api: { setWebhook: jest.fn().mockResolvedValue(undefined) },
+    api: {
+      setWebhook: jest.fn().mockResolvedValue(undefined),
+      setMyCommands: jest.fn().mockResolvedValue(true),
+      setMyDescription: jest.fn().mockResolvedValue(true),
+      setMyShortDescription: jest.fn().mockResolvedValue(true),
+    },
   };
 }
 
@@ -25,7 +37,16 @@ describe('BotService', () => {
     expect(mockBot.command).toHaveBeenCalledWith('start', expect.any(Function));
   });
 
-  it('/start handler replies with a WebApp button pointing at MINI_APP_URL', async () => {
+  it('registers a /help handler', () => {
+    const mockBot = makeMockBot();
+    const service = new BotService(mockBot as unknown as Bot, MINI_APP_URL, false, BACKEND_URL);
+
+    service.onModuleInit();
+
+    expect(mockBot.command).toHaveBeenCalledWith('help', expect.any(Function));
+  });
+
+  it('/start handler replies with WebApp, GitHub and site buttons', async () => {
     const mockBot = makeMockBot();
     const service = new BotService(mockBot as unknown as Bot, MINI_APP_URL, false, BACKEND_URL);
     service.onModuleInit();
@@ -37,9 +58,27 @@ describe('BotService', () => {
     expect(ctx.reply).toHaveBeenCalledTimes(1);
     const [text, options] = ctx.reply.mock.calls[0];
     expect(text).toContain('Hermes');
-    const keyboard = options.reply_markup;
-    const button = keyboard.inline_keyboard[0][0] as { web_app: { url: string } };
-    expect(button.web_app.url).toBe(MINI_APP_URL);
+    expect(options.parse_mode).toBe('HTML');
+    const rows = options.reply_markup.inline_keyboard as Array<
+      Array<{ web_app?: { url: string }; url?: string }>
+    >;
+    expect(rows[0][0].web_app?.url).toBe(MINI_APP_URL);
+    const urls = rows.flat().map((b) => b.url);
+    expect(urls).toContain(HERMES_GITHUB_URL);
+    expect(urls).toContain(HERMES_SITE_URL);
+  });
+
+  it('sets bot commands and profile descriptions on init', () => {
+    const mockBot = makeMockBot();
+    const service = new BotService(mockBot as unknown as Bot, MINI_APP_URL, false, BACKEND_URL);
+
+    service.onModuleInit();
+
+    expect(mockBot.api.setMyCommands).toHaveBeenCalledWith([...BOT_COMMANDS]);
+    expect(mockBot.api.setMyDescription).toHaveBeenCalledWith(BOT_DESCRIPTION);
+    expect(mockBot.api.setMyShortDescription).toHaveBeenCalledWith(BOT_SHORT_DESCRIPTION);
+    expect(BOT_DESCRIPTION.length).toBeLessThanOrEqual(512);
+    expect(BOT_SHORT_DESCRIPTION.length).toBeLessThanOrEqual(120);
   });
 
   it('starts long polling when useWebhook is false', () => {
