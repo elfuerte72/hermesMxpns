@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getInitData, initTelegram, openBotChat } from './telegram';
+import { getInitData, hapticImpact, initTelegram, openBotChat } from './telegram';
 
 afterEach(() => {
   delete window.Telegram;
@@ -32,10 +32,51 @@ describe('initTelegram', () => {
   });
 });
 
+describe('hapticImpact', () => {
+  it('forwards the style to the Telegram bridge', () => {
+    const impactOccurred = vi.fn();
+    window.Telegram = {
+      WebApp: {
+        initData: '',
+        ready: () => {},
+        expand: () => {},
+        HapticFeedback: { impactOccurred },
+      },
+    };
+    hapticImpact('light');
+    expect(impactOccurred).toHaveBeenCalledWith('light');
+  });
+
+  it('defaults to a light impact', () => {
+    const impactOccurred = vi.fn();
+    window.Telegram = {
+      WebApp: {
+        initData: '',
+        ready: () => {},
+        expand: () => {},
+        HapticFeedback: { impactOccurred },
+      },
+    };
+    hapticImpact();
+    expect(impactOccurred).toHaveBeenCalledWith('light');
+  });
+
+  it('is a no-op outside Telegram', () => {
+    expect(() => hapticImpact()).not.toThrow();
+  });
+
+  it('is a no-op when the bridge has no HapticFeedback', () => {
+    window.Telegram = { WebApp: { initData: '', ready: () => {}, expand: () => {} } };
+    expect(() => hapticImpact()).not.toThrow();
+  });
+});
+
 describe('openBotChat', () => {
   it('uses the Telegram deep-link opener when available', () => {
     const openTelegramLink = vi.fn();
-    window.Telegram = { WebApp: { initData: '', ready: () => {}, expand: () => {}, openTelegramLink } };
+    window.Telegram = {
+      WebApp: { initData: '', ready: () => {}, expand: () => {}, openTelegramLink },
+    };
     openBotChat('coolbot');
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/coolbot');
   });

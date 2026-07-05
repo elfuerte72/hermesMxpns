@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DeployView } from '@hermes/shared';
+import type { DeployStatus, DeployView } from '@hermes/shared';
 import { getDeploy } from '../api';
 import { STATUS_LABELS, isTerminal, statusProgress } from '../deploy-status';
-import { openBotChat } from '../telegram';
+import { hapticImpact, openBotChat } from '../telegram';
+import robot from '../assets/robot.png';
+import { PixelButton } from './ui';
 
 interface DeployStatusViewProps {
   deployId: string;
@@ -11,6 +13,8 @@ interface DeployStatusViewProps {
 
 const POLL_MS = 3000;
 const RETRY_MS = 5000;
+
+const CHECKLIST: ReadonlyArray<DeployStatus> = ['pending', 'creating', 'configuring', 'ready'];
 
 export function DeployStatusView({ deployId, onReset }: DeployStatusViewProps): ReactElement {
   const [deploy, setDeploy] = useState<DeployView | null>(null);
@@ -26,6 +30,7 @@ export function DeployStatusView({ deployId, onReset }: DeployStatusViewProps): 
         if (!active) return;
         setDeploy(view);
         setError(null);
+        if (view.status === 'ready') hapticImpact('light');
         if (!isTerminal(view.status)) timer = setTimeout(poll, POLL_MS);
       } catch (err) {
         if (!active) return;
@@ -45,50 +50,79 @@ export function DeployStatusView({ deployId, onReset }: DeployStatusViewProps): 
   const progress = statusProgress(status);
   const failed = status === 'failed';
   const ready = status === 'ready';
+  const stageIndex = CHECKLIST.indexOf(status);
+
+  function checklistIcon(index: number): { icon: string; className: string } {
+    if (ready || index < stageIndex) return { icon: '✓', className: 'text-ok' };
+    if (index === stageIndex) return { icon: '⚡', className: 'text-accent animate-blink' };
+    return { icon: '○', className: 'text-dim' };
+  }
 
   return (
-    <section className="flex w-full max-w-sm flex-col gap-5 text-center">
-      <h1 className="text-xl font-bold text-slate-900">Статус деплоя</h1>
+    <section className="flex flex-1 flex-col gap-5">
+      <div className="flex justify-between text-[10px] tracking-[0.2em] text-dim uppercase">
+        <span>HERMES</span>
+        <span>ДЕПЛОЙ</span>
+      </div>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${failed ? 'bg-red-500' : 'bg-blue-600'}`}
-          style={{ width: `${failed ? 100 : progress}%` }}
+      <div className="mt-4 text-center">
+        <img
+          src={robot}
+          alt="Hermes robot"
+          className={`mx-auto w-[104px] ${failed ? 'opacity-60' : 'animate-bob'}`}
         />
       </div>
 
-      <p className={`text-base font-medium ${failed ? 'text-red-600' : 'text-slate-700'}`}>
+      <h2 className={`text-center text-sm tracking-wide uppercase ${failed ? 'text-red-400' : ''}`}>
         {STATUS_LABELS[status]}
-      </p>
+      </h2>
+
+      <div className="flex flex-col gap-2.5 border-2 border-edge bg-field p-3.5">
+        {CHECKLIST.map((stage, index) => {
+          const { icon, className } = checklistIcon(index);
+          return (
+            <div key={stage} className="flex items-baseline gap-2.5 text-[10px]">
+              <span className={className}>{icon}</span>
+              <span className={index <= stageIndex || ready ? 'text-ink' : 'text-dim'}>
+                {STATUS_LABELS[stage]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="h-4 w-full border-2 border-edge bg-field">
+        <div
+          className={`h-full transition-all duration-500 ${failed ? 'bg-red-500' : ready ? 'bg-ok' : 'bg-accent'}`}
+          style={{
+            width: `${failed ? 100 : progress}%`,
+            backgroundImage:
+              'repeating-linear-gradient(45deg, rgba(18,18,26,.35) 0 6px, transparent 6px 12px)',
+          }}
+        />
+      </div>
 
       {error && !ready && !failed && (
-        <p className="text-xs text-slate-400">Переподключаемся… ({error})</p>
+        <p className="text-center text-[8px] tracking-wide text-dim">Переподключаемся… ({error})</p>
       )}
 
-      {ready && deploy && (
-        <button
-          type="button"
-          onClick={() => openBotChat(deploy.bot_username)}
-          className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white"
-        >
-          Открыть @{deploy.bot_username}
-        </button>
-      )}
-
-      {failed && (
-        <div className="flex flex-col gap-3">
-          <p className="text-sm text-slate-500">
-            Что-то пошло не так при развёртывании. Попробуйте ещё раз или напишите в поддержку.
-          </p>
-          <button
-            type="button"
-            onClick={onReset}
-            className="rounded-lg bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700"
-          >
-            Начать заново
-          </button>
-        </div>
-      )}
+      <div className="mt-auto flex flex-col gap-2.5 pb-3">
+        {ready && deploy && (
+          <PixelButton variant="ok" onClick={() => openBotChat(deploy.bot_username)}>
+            Открыть @{deploy.bot_username}
+          </PixelButton>
+        )}
+        {failed && (
+          <>
+            <p className="text-center text-[9px] leading-relaxed text-dim">
+              Что-то пошло не так при развёртывании. Попробуйте ещё раз или напишите в поддержку.
+            </p>
+            <PixelButton variant="accent" onClick={onReset}>
+              Начать заново
+            </PixelButton>
+          </>
+        )}
+      </div>
     </section>
   );
 }

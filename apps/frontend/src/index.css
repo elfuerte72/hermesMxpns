@@ -1,1 +1,58 @@
 @import 'tailwindcss';
+
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('./assets/press-start-2p.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --color-bg: #12121a;
+  --color-ink: #f2f2ea;
+  --color-dim: #8a8aa0;
+  --color-accent: #ffcf3f;
+  --color-ok: #5fe3a1;
+  --color-field: #1c1c28;
+  --color-edge: #3a3a4c;
+  --font-pixel: 'Press Start 2P', ui-monospace, monospace;
+  --animate-bob: bob 1.6s steps(2) infinite;
+  --animate-blink: blink 1.2s steps(2) infinite;
+
+  @keyframes bob {
+    50% {
+      transform: translateY(-6px);
+    }
+  }
+
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--color-bg);
+  }
+
+  body {
+    color: var(--color-ink);
+    font-family: var(--font-pixel);
+    line-height: 1.9;
+  }
+
+  img {
+    image-rendering: pixelated;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-bob,
+  .animate-blink {
+    animation: none;
+  }
+}

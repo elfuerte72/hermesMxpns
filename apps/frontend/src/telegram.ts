@@ -1,3 +1,5 @@
+export type HapticImpactStyle = 'light' | 'medium' | 'heavy' | 'rigid' | 'soft';
+
 /** Minimal typing over the Telegram Web App JS bridge (window.Telegram.WebApp). */
 export interface TelegramWebApp {
   initData: string;
@@ -6,6 +8,7 @@ export interface TelegramWebApp {
   expand: () => void;
   openTelegramLink?: (url: string) => void;
   colorScheme?: 'light' | 'dark';
+  HapticFeedback?: { impactOccurred: (style: HapticImpactStyle) => void };
 }
 
 declare global {
@@ -34,6 +37,10 @@ export function initTelegram(): void {
   const webApp = getWebApp();
   webApp?.ready();
   webApp?.expand();
+}
+
+export function hapticImpact(style: HapticImpactStyle = 'light'): void {
+  getWebApp()?.HapticFeedback?.impactOccurred(style);
 }
 
 /** Open a chat with the given bot, via Telegram when available. */
