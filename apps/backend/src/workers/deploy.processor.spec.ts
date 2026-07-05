@@ -15,7 +15,12 @@ import {
 
 const TEST_KEY = 'a'.repeat(64);
 
-function makeVm(state: HostingerVmState, ipv4: string[], id = 777): HostingerVirtualMachine {
+function makeVm(
+  state: HostingerVmState,
+  ipv4: string[],
+  id = 777,
+  overrides: Partial<HostingerVirtualMachine> = {},
+): HostingerVirtualMachine {
   return {
     id,
     hostname: 'vm',
@@ -25,7 +30,16 @@ function makeVm(state: HostingerVmState, ipv4: string[], id = 777): HostingerVir
     data_center_id: HERMES_DATA_CENTER_ID,
     plan: null,
     created_at: '',
+    ...overrides,
   };
+}
+
+function makeLateVm(id = 888, overrides: Partial<HostingerVirtualMachine> = {}): HostingerVirtualMachine {
+  return makeVm('initial', [], id, {
+    plan: 'KVM 1',
+    created_at: new Date().toISOString(),
+    ...overrides,
+  });
 }
 
 function makeContainer(
@@ -45,12 +59,14 @@ function makeContainer(
 describe('DeployProcessor', () => {
   let secrets: SecretsService;
   let prisma: {
-    deploy: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
+    deploy: { findUnique: jest.Mock; findMany: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
     provisioningLog: { create: jest.Mock };
   };
   let provisioning: {
     purchaseVM: jest.Mock;
+    setupVM: jest.Mock;
     getVM: jest.Mock;
+    listVMs: jest.Mock;
     createDockerProject: jest.Mock;
     getDockerProjectContainers: jest.Mock;
     deleteVM: jest.Mock;
@@ -85,6 +101,7 @@ describe('DeployProcessor', () => {
     prisma = {
       deploy: {
         findUnique: jest.fn().mockResolvedValue(makeDeployRow()),
+        findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn().mockResolvedValue({}),
       },
@@ -93,8 +110,10 @@ describe('DeployProcessor', () => {
     provisioning = {
       purchaseVM: jest
         .fn()
-        .mockResolvedValue({ orderId: 1, virtualMachine: makeVm('initial', []) }),
+        .mockResolvedValue({ orderId: 1, virtualMachine: makeVm('creating', []) }),
+      setupVM: jest.fn().mockResolvedValue(makeVm('creating', [])),
       getVM: jest.fn().mockResolvedValue(makeVm('running', ['203.0.113.9'])),
+      listVMs: jest.fn().mockResolvedValue([]),
       createDockerProject: jest.fn().mockResolvedValue(undefined),
       getDockerProjectContainers: jest.fn().mockResolvedValue([makeContainer('running')]),
       deleteVM: jest.fn().mockResolvedValue(undefined),
@@ -250,12 +269,144 @@ describe('DeployProcessor', () => {
     await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1');
 
     expect(provisioning.purchaseVM).toHaveBeenCalledTimes(1);
+    expect(provisioning.listVMs).not.toHaveBeenCalled();
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
     });
     expect(notifier.deployFailed).toHaveBeenCalledWith(42n, expect.any(String));
+  });
+
+  it('does not call setupVM when purchase returns a VM already being created', async () => {
+    await makeProcessor().process('deploy-1');
+    expect(provisioning.setupVM).not.toHaveBeenCalled();
+    expect(notifier.deployReady).toHaveBeenCalled();
+  });
+
+  it('calls setupVM when purchase leaves the VM in the initial state', async () => {
+    provisioning.purchaseVM.mockResolvedValue({
+      orderId: 1,
+      virtualMachine: makeVm('initial', []),
+    });
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.setupVM).toHaveBeenCalledWith(777, {
+      templateId: HERMES_TEMPLATE_ID,
+      dataCenterId: HERMES_DATA_CENTER_ID,
+    });
+    expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
+    expect(notifier.deployFailed).not.toHaveBeenCalled();
+  });
+
+  it('fails and cleans up the VM when setupVM errors out', async () => {
+    provisioning.purchaseVM.mockResolvedValue({
+      orderId: 1,
+      virtualMachine: makeVm('initial', []),
+    });
+    provisioning.setupVM.mockRejectedValue({ response: { status: 400 } });
+
+    await makeProcessor().process('deploy-1');
+
+    expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { status: 'failed' },
+    });
+  });
+
+  describe('402 purchase race', () => {
+    beforeEach(() => {
+      provisioning.purchaseVM.mockRejectedValue({ response: { status: 402 } });
+    });
+
+    it('adopts a late initial VM, sets it up and completes the deploy', async () => {
+      provisioning.listVMs
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([makeLateVm(888)]);
+
+      await makeProcessor({ lateVmPollIntervalMs: 1, lateVmPollMaxAttempts: 5 }).process(
+        'deploy-1',
+      );
+
+      expect(provisioning.listVMs).toHaveBeenCalledTimes(2);
+      expect(prisma.deploy.update).toHaveBeenCalledWith({
+        where: { id: 'deploy-1' },
+        data: { hostinger_vm_id: '888' },
+      });
+      expect(provisioning.setupVM).toHaveBeenCalledWith(888, {
+        templateId: HERMES_TEMPLATE_ID,
+        dataCenterId: HERMES_DATA_CENTER_ID,
+      });
+      expect(prisma.deploy.updateMany).toHaveBeenCalledWith({
+        where: { id: 'deploy-1', status: 'configuring' },
+        data: { status: 'ready' },
+      });
+      expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
+      expect(notifier.deployFailed).not.toHaveBeenCalled();
+      expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    });
+
+    it('does not set up an adopted VM that is already creating', async () => {
+      provisioning.listVMs.mockResolvedValue([makeLateVm(888, { state: 'creating' })]);
+
+      await makeProcessor({ lateVmPollIntervalMs: 1, lateVmPollMaxAttempts: 5 }).process(
+        'deploy-1',
+      );
+
+      expect(provisioning.setupVM).not.toHaveBeenCalled();
+      expect(notifier.deployReady).toHaveBeenCalled();
+    });
+
+    it('fails when no VM appears within the grace window', async () => {
+      await makeProcessor({ lateVmPollIntervalMs: 1, lateVmPollMaxAttempts: 3 }).process(
+        'deploy-1',
+      );
+
+      expect(provisioning.listVMs).toHaveBeenCalledTimes(3);
+      expect(provisioning.setupVM).not.toHaveBeenCalled();
+      expect(provisioning.deleteVM).not.toHaveBeenCalled();
+      expect(prisma.deploy.update).toHaveBeenCalledWith({
+        where: { id: 'deploy-1' },
+        data: { status: 'failed' },
+      });
+      expect(notifier.deployFailed).toHaveBeenCalledWith(42n, expect.any(String));
+    });
+
+    it('never adopts a VM already claimed by another deploy', async () => {
+      provisioning.listVMs.mockResolvedValue([makeLateVm(888)]);
+      prisma.deploy.findMany.mockResolvedValue([{ hostinger_vm_id: '888' }]);
+
+      await makeProcessor({ lateVmPollIntervalMs: 1, lateVmPollMaxAttempts: 2 }).process(
+        'deploy-1',
+      );
+
+      expect(provisioning.setupVM).not.toHaveBeenCalled();
+      expect(prisma.deploy.update).toHaveBeenCalledWith({
+        where: { id: 'deploy-1' },
+        data: { status: 'failed' },
+      });
+    });
+
+    it('ignores VMs with the wrong plan, state or creation time', async () => {
+      provisioning.listVMs.mockResolvedValue([
+        makeLateVm(101, { plan: 'KVM 2' }),
+        makeLateVm(102, { state: 'running' }),
+        makeLateVm(103, { created_at: '2020-01-01T00:00:00Z' }),
+        makeLateVm(104, { plan: null }),
+      ]);
+
+      await makeProcessor({ lateVmPollIntervalMs: 1, lateVmPollMaxAttempts: 2 }).process(
+        'deploy-1',
+      );
+
+      expect(provisioning.setupVM).not.toHaveBeenCalled();
+      expect(prisma.deploy.update).toHaveBeenCalledWith({
+        where: { id: 'deploy-1' },
+        data: { status: 'failed' },
+      });
+    });
   });
 
   it('deletes the VM when the VM enters an error state', async () => {

@@ -16,6 +16,16 @@ export function hermesProjectName(deployId: string): string {
   return `hermes-${deployId}`;
 }
 
+/** Watch for a VM Hostinger creates after a 402 purchase: every 15s for ~3 min. */
+const LATE_VM_POLL_INTERVAL_MS = 15_000;
+const LATE_VM_POLL_MAX_ATTEMPTS = 12;
+/** Clock-skew slack when matching a late VM's created_at against purchase start. */
+const LATE_VM_CREATED_AT_SLACK_MS = 60_000;
+
+export function isHermesPlan(plan: string | null): boolean {
+  return plan !== null && plan.toLowerCase().replace(/\s+/g, '').includes('kvm1');
+}
+
 export interface DeployProcessorConfig {
   /** When true, skip all real (money-spending) Hostinger calls. */
   dryRun: boolean;
@@ -27,6 +37,10 @@ export interface DeployProcessorConfig {
   retryBaseDelayMs?: number;
   /** Injectable delay (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
+  /** Poll cadence while watching for a late VM after a 402 purchase. Default 15s. */
+  lateVmPollIntervalMs?: number;
+  /** Poll attempts for that watch (~3 min at the default cadence). Default 12. */
+  lateVmPollMaxAttempts?: number;
 }
 
 /**
@@ -74,16 +88,29 @@ export class DeployProcessor {
     let vmId: number | undefined;
     try {
       // 1. Purchase the VM. SPENDS REAL MONEY (guarded by DRY_RUN above); never retried.
-      const purchase = await this.provisioning.purchaseVM({
-        itemId: HERMES_ITEM_ID,
-        setup: { templateId: HERMES_TEMPLATE_ID, dataCenterId: HERMES_DATA_CENTER_ID },
-      });
-      vmId = purchase.virtualMachine.id;
+      // A 402 may still create the subscription + VM asynchronously (~60s later),
+      // so acquireVm watches listVMs before giving up — otherwise a paid orphan leaks.
+      const acquired = await this.acquireVm(deployId);
+      const acquiredVmId = acquired.id;
+      vmId = acquiredVmId;
       await this.prisma.deploy.update({
         where: { id: deployId },
-        data: { hostinger_vm_id: String(vmId) },
+        data: { hostinger_vm_id: String(acquiredVmId) },
       });
-      await this.log(deployId, 'purchase_vm', 'success', `vm ${vmId}`);
+      await this.log(deployId, 'purchase_vm', 'success', `vm ${acquiredVmId}`);
+
+      // 1b. A VM left in `initial` never installs on its own — request setup explicitly.
+      if (acquired.state === 'initial') {
+        await withRetry(
+          () =>
+            this.provisioning.setupVM(acquiredVmId, {
+              templateId: HERMES_TEMPLATE_ID,
+              dataCenterId: HERMES_DATA_CENTER_ID,
+            }),
+          this.retryOpts(),
+        );
+        await this.log(deployId, 'setup_vm', 'success', `vm ${acquiredVmId} setup requested`);
+      }
 
       // 2. Poll until the VM is running, record its IP, move to configuring.
       const vm = await this.waitForVm(vmId);
@@ -142,6 +169,68 @@ export class DeployProcessor {
     } catch (err) {
       await this.fail(deployId, deploy.user_id, vmId, err);
     }
+  }
+
+  /**
+   * Purchase the VM, tolerating the Hostinger 402 race: a payment failure may
+   * still spawn the subscription + VM shortly after. On 402, poll listVMs for a
+   * fresh, unclaimed KVM 1 VM and adopt it; give up (fail) if none appears.
+   */
+  private async acquireVm(deployId: string): Promise<HostingerVirtualMachine> {
+    const purchaseStartedAt = Date.now();
+    try {
+      const purchase = await this.provisioning.purchaseVM({
+        itemId: HERMES_ITEM_ID,
+        setup: { templateId: HERMES_TEMPLATE_ID, dataCenterId: HERMES_DATA_CENTER_ID },
+      });
+      return purchase.virtualMachine;
+    } catch (err) {
+      if (errorStatus(err) !== 402) throw err;
+      this.logger.warn(`deploy ${deployId}: purchase returned 402 — watching for a late VM`);
+      await this.log(deployId, 'purchase_402', 'warning', 'purchase 402 — watching for a late VM');
+      const vm = await this.waitForLateVm(purchaseStartedAt);
+      if (!vm) {
+        throw new Error('Purchase failed with 402 and no VM appeared within the grace window');
+      }
+      await this.log(deployId, 'adopt_vm', 'success', `adopted late vm ${vm.id} after 402`);
+      return vm;
+    }
+  }
+
+  private async waitForLateVm(purchaseStartedAt: number): Promise<HostingerVirtualMachine | null> {
+    const sleep = this.config.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const interval = this.config.lateVmPollIntervalMs ?? LATE_VM_POLL_INTERVAL_MS;
+    const maxAttempts = this.config.lateVmPollMaxAttempts ?? LATE_VM_POLL_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const vm = await this.findAdoptableVm(purchaseStartedAt);
+      if (vm) return vm;
+      if (attempt < maxAttempts) await sleep(interval);
+    }
+    return null;
+  }
+
+  /**
+   * A late VM is adoptable when it appeared after the purchase started, is a
+   * KVM 1 still in initial/creating, and no deploy row already claims it.
+   */
+  private async findAdoptableVm(purchaseStartedAt: number): Promise<HostingerVirtualMachine | null> {
+    const vms = await withRetry(() => this.provisioning.listVMs(), this.retryOpts());
+    const candidates = vms.filter((vm) => {
+      if (vm.state !== 'initial' && vm.state !== 'creating') return false;
+      if (!isHermesPlan(vm.plan)) return false;
+      const createdAt = Date.parse(vm.created_at);
+      return (
+        Number.isFinite(createdAt) && createdAt >= purchaseStartedAt - LATE_VM_CREATED_AT_SLACK_MS
+      );
+    });
+    if (candidates.length === 0) return null;
+
+    const claimed = await this.prisma.deploy.findMany({
+      where: { hostinger_vm_id: { in: candidates.map((vm) => String(vm.id)) } },
+      select: { hostinger_vm_id: true },
+    });
+    const claimedIds = new Set(claimed.map((d) => d.hostinger_vm_id));
+    return candidates.find((vm) => !claimedIds.has(String(vm.id))) ?? null;
   }
 
   private async waitForVm(vmId: number): Promise<HostingerVirtualMachine> {

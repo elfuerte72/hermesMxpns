@@ -16,6 +16,7 @@ import type {
   VPSV1DockerManagerContainerResource,
   VPSV1TemplateTemplateResource,
   VPSV1VirtualMachinePurchaseRequest,
+  VPSV1VirtualMachineSetupRequest,
   VPSV1VirtualMachineVirtualMachineResource,
 } from 'hostinger-api-sdk';
 import type {
@@ -25,6 +26,7 @@ import type {
   HostingerDockerContainer,
   HostingerPurchaseRequest,
   HostingerPurchaseResult,
+  HostingerPurchaseSetup,
   HostingerTemplate,
   HostingerVirtualMachine,
 } from '@hermes/shared';
@@ -87,6 +89,18 @@ export class ProvisioningService {
     };
   }
 
+  async setupVM(id: number, setup: HostingerPurchaseSetup): Promise<HostingerVirtualMachine> {
+    const body = {
+      template_id: setup.templateId,
+      data_center_id: setup.dataCenterId,
+    };
+    const res = await this.vmApi.setupPurchasedVirtualMachineV1(
+      id,
+      body as unknown as VPSV1VirtualMachineSetupRequest,
+    );
+    return mapVM(res.data);
+  }
+
   async getVM(id: number): Promise<HostingerVirtualMachine> {
     const res = await this.vmApi.getVirtualMachineDetailsV1(id);
     return mapVM(res.data);
@@ -121,6 +135,10 @@ export class ProvisioningService {
   ): Promise<HostingerDockerContainer[]> {
     const res = await this.dockerApi.getProjectContainersV1(vmId, projectName);
     return res.data.map(mapContainer);
+  }
+
+  async restartDockerProject(vmId: number, projectName: string): Promise<void> {
+    await this.dockerApi.restartProjectV1(vmId, projectName);
   }
 
   async deleteVM(id: number): Promise<void> {
