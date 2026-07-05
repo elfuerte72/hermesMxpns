@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `AGENTS.md` — единый источник правды по намерению, стеку, конвенциям и **boundaries** (секреты, живой Hostinger-токен, `DRY_RUN`, зафиксированные тариф/регион/template). Прочитать его перед работой; ниже — только то, что дополняет его (архитектура «между файлами» + команды). Doc-driven: контекст в `docs/intent/` → `docs/architecture/` → `docs/plan/`. Факты Hostinger/Hermes сверены в `docs/architecture` — не угадывать, при пробеле спросить человека.
 
-**Статус:** Phase 1–2 сделаны (foundation, Prisma, secrets, Hostinger wrapper, TMA-auth, entry-бот, LLM-каталог, валидация bot-token). Следующее — Phase 3 / Task 9 (`POST /deploys`). Frontend пока только скаффолд. BullMQ/ssh2 в стеке заявлены, но ещё не в зависимостях backend'а.
+**Статус:** MVP код-комплит на моках — Tasks 1–18 закрыты (полный backend-флоу: deploys → BullMQ-воркеры → bootstrap → webhook → ready; teardown, reconcile-cron, watchdog; Mini App UI). 201 тест: 186 backend (Jest) + 15 frontend (vitest). **Прод развёрнут в Dokploy:** `https://hermes.mxpkn8ns.ru` (single-origin: backend отдаёт Mini App под `/app/`; ранбук — `docs/deploy/dokploy.md`). Открыто: чекпойнт реального деплоя VPS (`DRY_RUN=false` — тратит реальные деньги, только с явного одобрения человека) и Phase 6 (биллинг Telegram Stars).
 
 ## Commands (запускать из корня, если не сказано иное)
 
@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Backend dev в одиночку: `npm run dev:backend` (nest watch, порт 3000).
 - Локальная инфра: `docker compose up -d` (Postgres :5432 + Redis :6379).
 - Prisma (**из `apps/backend`**): `npm run prisma:migrate` (migrate dev), `npm run prisma:generate`.
+- Прод-образ: корневой `Dockerfile` (multi-stage; на старте контейнера — `prisma migrate deploy`, статика фронта под `/app` через `SERVE_FRONTEND_DIR`). **Пуш в `main` автодеплоит прод** (Dokploy Autodeploy) — не пушить без зелёных lint/build/test.
 
 ## Архитектура
 

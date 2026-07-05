@@ -9,10 +9,11 @@ One-click деплой Hermes-агента (Nous Research) для нетехни
 1. `docs/intent/hermes-deployer.md` — подтверждённое намерение (what/why/success/constraints/out-of-scope)
 2. `docs/architecture/hermes-deployer.md` — технический референс: проверенные факты Hostinger API, Hermes setup, LLM-провайдеры, модель данных, API, flow, безопасность. **Все факты sourced — не переследовать, не угадывать.**
 3. `docs/plan/hermes-deployer.md` — фазы и задачи (Task 1 → Task 18, чекпойнты). Реализовывать строго по фазам, вертикальными срезами.
+4. `docs/deploy/dokploy.md` — прод-развёртывание (Dokploy: сервисы, домен, env, ограничения IP-проверки).
 
 ## Tech stack
-- **Backend:** NestJS + TypeScript (Node 20+), Prisma, BullMQ, grammY, `hostinger-api-sdk`, `ssh2`
-- **Frontend (Mini App):** React 18 + Vite + TypeScript + `@telegram-apps/sdk-react` + Tailwind
+- **Backend:** NestJS + TypeScript (Node 20+), Prisma, BullMQ, grammY, `hostinger-api-sdk` (`ssh2`-recovery не понадобился — post-install работает без SSH, в зависимостях его нет)
+- **Frontend (Mini App):** React 19 + Vite + TypeScript + Tailwind; вместо `@telegram-apps/sdk-react` — свой мост `telegram.ts` над `window.Telegram.WebApp` (см. arch §14/§17)
 - **Infra:** PostgreSQL, Redis (docker compose локально)
 - **Monorepo:** npm workspaces — `apps/backend`, `apps/frontend`, `packages/shared`
 
@@ -40,8 +41,10 @@ One-click деплой Hermes-агента (Nous Research) для нетехни
 - **Hostinger API-токен лежит в `.env` (`HOSTINGER_API_TOKEN`).** Это живой токен оператора. Не логировать, не отправлять в репо, не хардкодить. Перед продом — ротировать.
 - **Не угадывать Hostinger API / Hermes setup** — всё сверено в `docs/architecture`. Если факт нужен и его там нет — спросить человека, не изобретать.
 - **Не менять тариф/регион/template** без подтверждения (KVM 1, Vilnius id=11, template 1121 — зафиксированы).
-- **`purchaseVM` списывает реальные деньги.** В dev использовать флаг `DRY_RUN=true` (мок Hostinger), реальные вызовы — только в чекпойнтах с явного одобрения.
-- Перед коммитом: `npm run lint && npm run build && npm test` (когда настроено).
+- **`purchaseVM` списывает реальные деньги.** В dev использовать флаг `DRY_RUN=true` (мок Hostinger), реальные вызовы — только в чекпойнтах с явного одобрения. В проде (Dokploy) тоже стоит `DRY_RUN=true` до чекпойнта.
+- **Пуш в `main` автодеплоит прод** (Dokploy Autodeploy → `https://hermes.mxpkn8ns.ru`). Не пушить без зелёных lint/build/test.
+- **Прод-`ENCRYPTION_KEY` (задан в Dokploy, отличается от локального) не менять** — сломается расшифровка секретов в прод-БД.
+- Перед коммитом: `npm run lint && npm run build && npm test`.
 
 ## Env (`.env`, gitignored; shape в `.env.example`)
 ```
@@ -55,14 +58,16 @@ ENCRYPTION_KEY=<32-byte hex>            # для AES-GCM, сгенерирова
 BACKEND_URL=https://<публичный-домен>   # для webhook'ов и bootstrap-pull
 MINI_APP_URL=https://<домен-mini-app>
 DRY_RUN=true                            # мок Hostinger в dev
+# SERVE_FRONTEND_DIR=<путь к apps/frontend/dist>  # отдавать Mini App с бэкенда под /app (прод)
 ```
 
+Прод-значения env живут в Dokploy (hermes-backend → Environment), не в этом репо. `BACKEND_URL=https://hermes.mxpkn8ns.ru`, `MINI_APP_URL=https://hermes.mxpkn8ns.ru/app/`, `BOT_USE_WEBHOOK=true`.
+
 ## How to start (для свежего агента)
-1. Прочитать три дока выше.
-2. Начать с **Phase 1, Task 1** из `docs/plan/hermes-deployer.md` (скаффолд монорепо).
-3. Идти строго по фазам; после каждой фазы — чекпойнт (см. план). На чекпойнте停下来 и ревью с человеком.
-4. Использовать `incremental-implementation` и `test-driven-development` скиллы; каждая задача = вертикальный срез с acceptance criteria и verification.
-5. Все технические факты брать из `docs/architecture`; если устарели — обновлять док, а не молча отклоняться.
+1. Прочитать доки выше (intent → architecture → plan → deploy).
+2. Сверить статус в `CLAUDE.md` и открытые чекпойнты в `docs/plan/hermes-deployer.md`.
+3. Использовать `incremental-implementation` и `test-driven-development` скиллы; каждая задача = вертикальный срез с acceptance criteria и verification.
+4. Все технические факты брать из `docs/architecture`; если устарели — обновлять док, а не молча отклоняться.
 
 ## Status
-Greenfield. Кода пока нет. Git не инициализирован (Task 1 инициализирует). Контекстные доки готовы.
+MVP код-комплит на моках (Tasks 1–18, 201 тест: 186 backend + 15 frontend). Прод задеплоен в Dokploy: `https://hermes.mxpkn8ns.ru` (Postgres+Redis как сервисы Dokploy, приложение из корневого `Dockerfile`, Mini App под `/app/`, автодеплой из `main`) — см. `docs/deploy/dokploy.md`. Открыто: ручной прогон Mini App в Telegram (Web App URL в BotFather), чекпойнт реального деплоя VPS (`DRY_RUN=false`, только с одобрения человека), Phase 6 — биллинг Telegram Stars.
