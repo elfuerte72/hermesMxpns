@@ -7,6 +7,8 @@ import { SecretsModule } from '../secrets/secrets.module';
 import { SecretsService } from '../secrets/secrets.service';
 import { ProvisioningModule } from '../provisioning/provisioning.module';
 import { ProvisioningService } from '../provisioning/provisioning.service';
+import { SubscriptionModule } from '../subscription/subscription.module';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { ValidateBotTokenController } from './validate-bot-token.controller';
 import { TELEGRAM_API_BASE, ValidateBotTokenService } from './validate-bot-token.service';
 import { ValidateLlmKeyController } from './validate-llm-key.controller';
@@ -17,7 +19,7 @@ import { BullDeployQueue, DeployQueue } from './deploy-queue';
 import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
 
 @Module({
-  imports: [PrismaModule, AuthModule, SecretsModule, ProvisioningModule],
+  imports: [PrismaModule, AuthModule, SecretsModule, ProvisioningModule, SubscriptionModule],
   controllers: [ValidateBotTokenController, ValidateLlmKeyController, DeploysController],
   providers: [
     ValidateLlmKeyService,
@@ -48,6 +50,8 @@ import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
         TeardownQueue,
         ProvisioningService,
         ValidateLlmKeyService,
+        SubscriptionService,
+        ConfigService,
       ],
       useFactory: (
         prisma: PrismaService,
@@ -57,8 +61,12 @@ import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
         teardownQueue: TeardownQueue,
         provisioning: ProvisioningService,
         validateLlmKey: ValidateLlmKeyService,
-      ) =>
-        new DeploysService(
+        subscription: SubscriptionService,
+        config: ConfigService,
+      ) => {
+        const channelIdStr = config.get<string>('SUBSCRIPTION_CHANNEL_ID');
+        const channelId = channelIdStr ? BigInt(channelIdStr) : null;
+        return new DeploysService(
           prisma,
           secrets,
           validateBotToken,
@@ -66,8 +74,12 @@ import { BullTeardownQueue, TeardownQueue } from './teardown-queue';
           teardownQueue,
           provisioning,
           validateLlmKey,
-        ),
+          subscription,
+          channelId,
+        );
+      },
     },
   ],
+  exports: [ValidateBotTokenService, TeardownQueue],
 })
 export class DeploysModule {}

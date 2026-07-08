@@ -12,6 +12,7 @@ describe('DeploysController', () => {
     requestTeardown: jest.Mock;
     restart: jest.Mock;
     updateLlmKey: jest.Mock;
+    updateBotToken: jest.Mock;
   };
 
   beforeEach(() => {
@@ -22,13 +23,14 @@ describe('DeploysController', () => {
       requestTeardown: jest.fn(),
       restart: jest.fn(),
       updateLlmKey: jest.fn(),
+      updateBotToken: jest.fn(),
     };
     controller = new DeploysController(service as unknown as DeploysService);
   });
 
   it('POST /deploys delegates the current user and dto to the service', async () => {
     const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
-    const dto: CreateDeployDto = { bot_token: '1:a', llm_provider: 'groq', llm_key: 'k' };
+    const dto: CreateDeployDto = { bot_token: '1:a' };
     service.create.mockResolvedValue({ deploy_id: 'd-1', status: 'pending' });
 
     const result = await controller.create(user, dto);
@@ -71,10 +73,19 @@ describe('DeploysController', () => {
 
   it('PATCH /deploys/:id/llm-key delegates to updateLlmKey', async () => {
     const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
-    const dto = { provider_id: 'groq', api_key: 'sk-x' };
+    const dto = { provider_id: 'openrouter', api_key: 'sk-x' };
     service.updateLlmKey.mockResolvedValue({ ok: true });
     const result = await controller.updateLlmKey(user, 'd-1', dto);
     expect(service.updateLlmKey).toHaveBeenCalledWith(user, 'd-1', dto);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('PATCH /deploys/:id/bot-token delegates to updateBotToken', async () => {
+    const user: AuthenticatedUser = { telegram_id: '42', username: 'bob' };
+    const dto = { bot_token: '123:a' };
+    service.updateBotToken.mockResolvedValue({ ok: true });
+    const result = await controller.updateBotToken(user, 'd-1', dto);
+    expect(service.updateBotToken).toHaveBeenCalledWith(user, 'd-1', dto);
     expect(result).toEqual({ ok: true });
   });
 });

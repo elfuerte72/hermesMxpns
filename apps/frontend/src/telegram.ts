@@ -53,3 +53,13 @@ export function openBotChat(username: string): void {
     window.open(url, '_blank');
   }
 }
+
+/** Open an arbitrary t.me link (e.g. @tribute) inside Telegram when available. */
+export function openTelegramUrl(url: string): void {
+  const webApp = getWebApp();
+  if (webApp?.openTelegramLink) {
+    webApp.openTelegramLink(url);
+  } else if (typeof window !== 'undefined') {
+    window.open(url, '_blank');
+  }
+}

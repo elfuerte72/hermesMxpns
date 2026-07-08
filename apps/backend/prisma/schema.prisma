@@ -35,13 +35,24 @@ model Deploy {
   llm_provider    String
   llm_base_url    String?
   llm_model       String?
-  llm_key_enc     String
-  hostinger_vm_id String?
-  status          DeployStatus @default(pending)
-  vm_ip           String?
-  paid_until      DateTime?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
+  // Nullable for the one-click bundle: the worker mints the managed OpenRouter
+  // key after the VM is up (§23.9 step 4). BYOK deploys set it at creation.
+  llm_key_enc     String?
+  hostinger_vm_id         String?
+  status                  DeployStatus @default(pending)
+  vm_ip                   String?
+  // Phase 6 — managed OpenRouter key (§23.3): hash for PATCH/DELETE; plaintext in llm_key_enc.
+  openrouter_key_hash     String?
+  // Phase 6 — Tribute channel-membership gating (§23.2/§23.6).
+  subscription_channel_id BigInt?
+  subscription_status     String?
+  subscription_until      DateTime?
+  // When subscription_status last became 'expired' — drives the grace-teardown cron (§23.9 step 6).
+  subscription_expired_at DateTime?
+  // Phase 6 — bot-token health, independent of VM status (§23.8): 'valid' | 'invalid' | null.
+  bot_token_status        String?
+  created_at              DateTime     @default(now())
+  updated_at              DateTime     @updatedAt
 
   user              User              @relation(fields: [user_id], references: [telegram_id], onDelete: Cascade)
   provisioning_logs ProvisioningLog[]
@@ -49,6 +60,7 @@ model Deploy {
   @@index([user_id])
   @@index([status])
   @@index([bot_username])
+  @@index([subscription_status])
   @@map("deploys")
 }
 

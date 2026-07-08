@@ -7,6 +7,7 @@ describe('TeardownProcessor', () => {
   };
   let provisioning: { deleteVM: jest.Mock };
   let notifier: { deployDeleted: jest.Mock };
+  let openRouterKeys: { deleteKey: jest.Mock };
   let config: TeardownProcessorConfig;
 
   function makeDeploy(overrides: Record<string, unknown> = {}) {
@@ -16,15 +17,19 @@ describe('TeardownProcessor', () => {
       bot_username: 'coolbot',
       status: 'ready',
       hostinger_vm_id: '777',
+      openrouter_key_hash: 'key-hash-1',
       ...overrides,
     };
   }
 
   function makeProcessor(dryRun = false): TeardownProcessor {
-    return new TeardownProcessor(prisma as never, provisioning as never, notifier as never, {
-      ...config,
-      dryRun,
-    });
+    return new TeardownProcessor(
+      prisma as never,
+      provisioning as never,
+      notifier as never,
+      { ...config, dryRun },
+      openRouterKeys as never,
+    );
   }
 
   beforeEach(() => {
@@ -36,17 +41,17 @@ describe('TeardownProcessor', () => {
       },
       provisioningLog: { create: jest.fn().mockResolvedValue({}) },
     };
-    provisioning = {
-      deleteVM: jest.fn().mockResolvedValue(undefined),
-    };
+    provisioning = { deleteVM: jest.fn().mockResolvedValue(undefined) };
     notifier = { deployDeleted: jest.fn().mockResolvedValue(undefined) };
+    openRouterKeys = { deleteKey: jest.fn().mockResolvedValue(undefined) };
     config = { dryRun: false };
   });
 
-  it('deletes the VM, marks deleted and notifies', async () => {
+  it('deletes the VM and the managed key, marks deleted and notifies', async () => {
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith('key-hash-1');
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'deleted' },
@@ -54,12 +59,13 @@ describe('TeardownProcessor', () => {
     expect(notifier.deployDeleted).toHaveBeenCalledWith(55n, 'coolbot');
   });
 
-  it('keeps the VM when another active deploy still relies on it', async () => {
+  it('keeps the VM when another active deploy still relies on it (but still deletes the key)', async () => {
     prisma.deploy.count.mockResolvedValue(1);
 
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith('key-hash-1');
     expect(prisma.deploy.count).toHaveBeenCalledWith({
       where: {
         hostinger_vm_id: '777',
@@ -77,6 +83,7 @@ describe('TeardownProcessor', () => {
     prisma.deploy.findUnique.mockResolvedValue(makeDeploy({ status: 'deleted' }));
     await makeProcessor().process('deploy-1');
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).not.toHaveBeenCalled();
     expect(notifier.deployDeleted).not.toHaveBeenCalled();
   });
@@ -87,9 +94,10 @@ describe('TeardownProcessor', () => {
     expect(prisma.deploy.update).not.toHaveBeenCalled();
   });
 
-  it('under DRY_RUN skips Hostinger deletions but still marks deleted', async () => {
+  it('under DRY_RUN skips Hostinger/OpenRouter deletions but still marks deleted', async () => {
     await makeProcessor(true).process('deploy-1');
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'deleted' },
@@ -106,13 +114,33 @@ describe('TeardownProcessor', () => {
     expect(notifier.deployDeleted).toHaveBeenCalled();
   });
 
-  it('handles a deploy with no provisioned resources', async () => {
-    prisma.deploy.findUnique.mockResolvedValue(makeDeploy({ hostinger_vm_id: null }));
+  it('still marks deleted when the OpenRouter key deletion throws', async () => {
+    openRouterKeys.deleteKey.mockRejectedValue(new Error('openrouter down'));
     await makeProcessor().process('deploy-1');
-    expect(provisioning.deleteVM).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'deleted' },
     });
+    expect(notifier.deployDeleted).toHaveBeenCalled();
+  });
+
+  it('handles a deploy with no provisioned resources (no VM, no key)', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(
+      makeDeploy({ hostinger_vm_id: null, openrouter_key_hash: null }),
+    );
+    await makeProcessor().process('deploy-1');
+    expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).not.toHaveBeenCalled();
+    expect(prisma.deploy.update).toHaveBeenCalledWith({
+      where: { id: 'deploy-1' },
+      data: { status: 'deleted' },
+    });
+  });
+
+  it('deletes only the key when the deploy has no VM but has a managed key', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(makeDeploy({ hostinger_vm_id: null }));
+    await makeProcessor().process('deploy-1');
+    expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith('key-hash-1');
   });
 });

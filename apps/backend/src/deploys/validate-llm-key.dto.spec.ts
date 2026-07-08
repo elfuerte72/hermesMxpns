@@ -1,8 +1,8 @@
 import { validateLlmKeySchema } from './validate-llm-key.dto';
 
 describe('validateLlmKeySchema', () => {
-  it('accepts a catalog provider with just an api_key', () => {
-    const result = validateLlmKeySchema.safeParse({ provider_id: 'groq', api_key: 'sk-x' });
+  it('accepts the openrouter provider with just an api_key (catalog default model)', () => {
+    const result = validateLlmKeySchema.safeParse({ provider_id: 'openrouter', api_key: 'sk-x' });
     expect(result.success).toBe(true);
   });
 
@@ -18,16 +18,11 @@ describe('validateLlmKeySchema', () => {
     expect(paths).toEqual(expect.arrayContaining(['base_url', 'model']));
   });
 
-  it('requires a model for openrouter (no catalog default)', () => {
-    const result = validateLlmKeySchema.safeParse({ provider_id: 'openrouter', api_key: 'sk-x' });
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts openrouter with an explicit model', () => {
+  it('accepts openrouter with an explicit model override', () => {
     const result = validateLlmKeySchema.safeParse({
       provider_id: 'openrouter',
       api_key: 'sk-x',
-      model: 'openai/gpt-4o-mini',
+      model: 'anthropic/claude-3.5-sonnet',
     });
     expect(result.success).toBe(true);
   });

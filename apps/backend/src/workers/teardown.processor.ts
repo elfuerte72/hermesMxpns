@@ -1,18 +1,19 @@
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from '../provisioning/provisioning.service';
+import { OpenRouterKeysService } from '../openrouter-keys/openrouter-keys.service';
 import { DeployNotifier } from './deploy-notifier';
 import { ACTIVE_DEPLOY_STATUSES } from './deploy.processor';
 
 export interface TeardownProcessorConfig {
-  /** When true, skip real Hostinger deletions (dev has no real resources). */
+  /** When true, skip real Hostinger/OpenRouter deletions (dev has no resources). */
   dryRun: boolean;
 }
 
 /**
- * BullMQ `teardown` job body — deletes the VM and marks the deploy `deleted`.
- * Idempotent: a repeat run on an already-deleted deploy is a no-op; cleanup
- * errors are swallowed (best-effort).
+ * BullMQ `teardown` job body — deletes the VM and the managed OpenRouter key,
+ * then marks the deploy `deleted`. Idempotent: a repeat run on an already-deleted
+ * deploy is a no-op; cleanup errors are swallowed (best-effort).
  */
 export class TeardownProcessor {
   private readonly logger = new Logger(TeardownProcessor.name);
@@ -22,6 +23,7 @@ export class TeardownProcessor {
     private readonly provisioning: ProvisioningService,
     private readonly notifier: DeployNotifier,
     private readonly config: TeardownProcessorConfig,
+    private readonly openRouterKeys: OpenRouterKeysService,
   ) {}
 
   async process(deployId: string): Promise<void> {
@@ -37,28 +39,43 @@ export class TeardownProcessor {
 
     if (this.config.dryRun) {
       await this.log(deployId, 'dry_run', 'skipped', 'DRY_RUN — teardown skipped');
-    } else if (deploy.hostinger_vm_id) {
-      // Never delete a VM another active deploy still relies on — a shared
-      // machine (e.g. an orphan adopted by a later successful deploy) must
-      // survive teardown of the deploy that no longer owns it.
-      const sharedBy = await this.prisma.deploy.count({
-        where: {
-          hostinger_vm_id: deploy.hostinger_vm_id,
-          id: { not: deployId },
-          status: { in: [...ACTIVE_DEPLOY_STATUSES] },
-        },
-      });
-      if (sharedBy > 0) {
-        await this.log(
-          deployId,
-          'teardown_vm',
-          'skipped',
-          `kept vm ${deploy.hostinger_vm_id} — still used by ${sharedBy} active deploy(s)`,
-        );
-      } else {
-        await this.tryCleanup(deployId, 'teardown_vm', deploy.hostinger_vm_id, (id) =>
-          this.provisioning.deleteVM(id),
-        );
+    } else {
+      if (deploy.hostinger_vm_id) {
+        // Never delete a VM another active deploy still relies on — a shared
+        // machine (e.g. an orphan adopted by a later successful deploy) must
+        // survive teardown of the deploy that no longer owns it.
+        const sharedBy = await this.prisma.deploy.count({
+          where: {
+            hostinger_vm_id: deploy.hostinger_vm_id,
+            id: { not: deployId },
+            status: { in: [...ACTIVE_DEPLOY_STATUSES] },
+          },
+        });
+        if (sharedBy > 0) {
+          await this.log(
+            deployId,
+            'teardown_vm',
+            'skipped',
+            `kept vm ${deploy.hostinger_vm_id} — still used by ${sharedBy} active deploy(s)`,
+          );
+        } else {
+          await this.tryCleanupVm(deployId, deploy.hostinger_vm_id);
+        }
+      }
+
+      // The managed OpenRouter key is per-deploy (never shared) — always delete it.
+      if (deploy.openrouter_key_hash) {
+        try {
+          await this.openRouterKeys.deleteKey(deploy.openrouter_key_hash);
+          await this.log(
+            deployId,
+            'teardown_key',
+            'success',
+            `deleted openrouter key ${deploy.openrouter_key_hash}`,
+          );
+        } catch (err) {
+          await this.log(deployId, 'teardown_key', 'error', `failed to delete key: ${String(err)}`);
+        }
       }
     }
 
@@ -73,17 +90,12 @@ export class TeardownProcessor {
     this.logger.log(`deploy ${deployId} torn down`);
   }
 
-  private async tryCleanup(
-    deployId: string,
-    step: string,
-    resourceId: string,
-    action: (id: number) => Promise<void>,
-  ): Promise<void> {
+  private async tryCleanupVm(deployId: string, vmId: string): Promise<void> {
     try {
-      await action(Number(resourceId));
-      await this.log(deployId, step, 'success', `deleted ${resourceId}`);
+      await this.provisioning.deleteVM(Number(vmId));
+      await this.log(deployId, 'teardown_vm', 'success', `deleted ${vmId}`);
     } catch (err) {
-      await this.log(deployId, step, 'error', `failed to delete ${resourceId}: ${String(err)}`);
+      await this.log(deployId, 'teardown_vm', 'error', `failed to delete ${vmId}: ${String(err)}`);
     }
   }
 

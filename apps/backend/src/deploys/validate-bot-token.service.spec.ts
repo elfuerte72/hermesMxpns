@@ -77,4 +77,44 @@ describe('ValidateBotTokenService', () => {
     await service.validate('999:Z-Y_x');
     expect(axios.get).toHaveBeenCalledWith(`${TELEGRAM_BASE}/bot999:Z-Y_x/getMe`);
   });
+
+  it('excludes the given deploy id from the uniqueness check (re-issue same bot)', async () => {
+    mockGetMe({ ok: true, result: { id: 42, username: 'mybot', first_name: 'Bot', is_bot: true } });
+
+    const result = await service.validate(TOKEN, 'self-deploy');
+
+    expect(result).toEqual({ username: 'mybot', id: 42 });
+    expect(prisma.deploy.findFirst).toHaveBeenCalledWith({
+      where: {
+        bot_username: 'mybot',
+        status: { in: ['pending', 'creating', 'configuring', 'ready'] },
+        id: { not: 'self-deploy' },
+      },
+      select: { id: true },
+    });
+  });
+
+  it('still 409s on a different active deploy even when excluding self', async () => {
+    mockGetMe({ ok: true, result: { id: 42, username: 'mybot', first_name: 'Bot', is_bot: true } });
+    prisma.deploy.findFirst.mockResolvedValue({ id: 'other-deploy' });
+
+    await expect(service.validate(TOKEN, 'self-deploy')).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  describe('isTokenValid', () => {
+    it('returns true for a live bot token', async () => {
+      mockGetMe({ ok: true, result: { id: 1, username: 'b', first_name: 'B', is_bot: true } });
+      await expect(service.isTokenValid(TOKEN)).resolves.toBe(true);
+    });
+
+    it('returns false when Telegram rejects the token (no throw)', async () => {
+      mockGetMeRejects(new Error('401'));
+      await expect(service.isTokenValid(TOKEN)).resolves.toBe(false);
+    });
+
+    it('returns false when ok: false', async () => {
+      mockGetMe({ ok: false });
+      await expect(service.isTokenValid(TOKEN)).resolves.toBe(false);
+    });
+  });
 });

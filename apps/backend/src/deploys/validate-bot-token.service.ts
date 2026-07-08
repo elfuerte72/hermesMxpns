@@ -22,10 +22,20 @@ export class ValidateBotTokenService {
     private readonly telegramApiBase: string = TELEGRAM_API_BASE,
   ) {}
 
-  async validate(botToken: string): Promise<ValidateBotTokenResponse> {
+  async validate(botToken: string, excludeDeployId?: string): Promise<ValidateBotTokenResponse> {
     const me = await this.callGetMe(botToken);
-    await this.assertNotInUse(me.username);
+    await this.assertNotInUse(me.username, excludeDeployId);
     return { username: me.username, id: me.id };
+  }
+
+  /** Whether the token still resolves to a live bot (getMe 200). No uniqueness check. */
+  async isTokenValid(botToken: string): Promise<boolean> {
+    try {
+      const me = await this.callGetMe(botToken);
+      return Boolean(me.username);
+    } catch {
+      return false;
+    }
   }
 
   private async callGetMe(botToken: string): Promise<{ id: number; username: string }> {
@@ -46,9 +56,13 @@ export class ValidateBotTokenService {
     return { id, username };
   }
 
-  private async assertNotInUse(username: string): Promise<void> {
+  private async assertNotInUse(username: string, excludeDeployId?: string): Promise<void> {
     const existing = await this.prisma.deploy.findFirst({
-      where: { bot_username: username, status: { in: [...ACTIVE_DEPLOY_STATUSES] } },
+      where: {
+        bot_username: username,
+        status: { in: [...ACTIVE_DEPLOY_STATUSES] },
+        ...(excludeDeployId ? { id: { not: excludeDeployId } } : {}),
+      },
       select: { id: true },
     });
     if (existing) {

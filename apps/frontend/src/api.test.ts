@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  checkSubscription,
   createDeploy,
   deleteDeploy,
   fetchProviders,
@@ -33,10 +34,10 @@ describe('api client', () => {
   });
 
   it('fetchProviders GETs /llm-providers without auth', async () => {
-    const fetchFn = mockFetch({ ok: true, status: 200, body: [{ id: 'groq' }] });
+    const fetchFn = mockFetch({ ok: true, status: 200, body: [{ id: 'openrouter' }] });
     const providers = await fetchProviders();
 
-    expect(providers).toEqual([{ id: 'groq' }]);
+    expect(providers).toEqual([{ id: 'openrouter' }]);
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe('/llm-providers');
     expect(init.method).toBe('GET');
@@ -58,13 +59,13 @@ describe('api client', () => {
     const fetchFn = mockFetch({
       ok: true,
       status: 200,
-      body: { ok: true, model: 'llama-3.3-70b-versatile', supports_tools: true, supports_streaming: true },
+      body: { ok: true, model: 'openai/gpt-4o-mini', supports_tools: true, supports_streaming: true },
     });
-    const res = await validateLlmKey({ provider_id: 'groq', api_key: 'sk-x' });
+    const res = await validateLlmKey({ provider_id: 'openrouter', api_key: 'sk-x' });
 
     expect(res).toEqual({
       ok: true,
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-4o-mini',
       supports_tools: true,
       supports_streaming: true,
     });
@@ -72,12 +73,12 @@ describe('api client', () => {
     expect(url).toBe('/validate-llm-key');
     expect(init.method).toBe('POST');
     expect(init.headers.Authorization).toBe('tma INIT');
-    expect(JSON.parse(init.body)).toEqual({ provider_id: 'groq', api_key: 'sk-x' });
+    expect(JSON.parse(init.body)).toEqual({ provider_id: 'openrouter', api_key: 'sk-x' });
   });
 
   it('validateLlmKey errors carry the machine-readable code', async () => {
     mockFetch({ ok: false, status: 422, body: { ok: false, code: 'invalid_key' } });
-    await expect(validateLlmKey({ provider_id: 'groq', api_key: 'bad' })).rejects.toMatchObject({
+    await expect(validateLlmKey({ provider_id: 'openrouter', api_key: 'bad' })).rejects.toMatchObject({
       name: 'ApiError',
       status: 422,
       code: 'invalid_key',
@@ -90,18 +91,34 @@ describe('api client', () => {
       status: 422,
       body: { ok: false, code: 'provider_incompatible', missing: ['tools'] },
     });
-    await expect(validateLlmKey({ provider_id: 'groq', api_key: 'sk-x' })).rejects.toMatchObject({
+    await expect(validateLlmKey({ provider_id: 'openrouter', api_key: 'sk-x' })).rejects.toMatchObject({
       code: 'provider_incompatible',
     });
   });
 
   it('createDeploy POSTs /deploys with auth', async () => {
     const fetchFn = mockFetch({ ok: true, status: 202, body: { deploy_id: 'd1', status: 'pending' } });
-    const res = await createDeploy({ bot_token: '1:a', llm_provider: 'groq', llm_key: 'k' });
+    const res = await createDeploy({ bot_token: '1:a' });
 
     expect(res).toEqual({ deploy_id: 'd1', status: 'pending' });
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe('/deploys');
+    expect(init.headers.Authorization).toBe('tma INIT');
+    expect(JSON.parse(init.body)).toEqual({ bot_token: '1:a' });
+  });
+
+  it('checkSubscription POSTs /subscription/check with auth', async () => {
+    const fetchFn = mockFetch({
+      ok: true,
+      status: 200,
+      body: { subscription_status: 'active', subscription_until: null },
+    });
+    const res = await checkSubscription();
+
+    expect(res).toEqual({ subscription_status: 'active', subscription_until: null });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/subscription/check');
+    expect(init.method).toBe('POST');
     expect(init.headers.Authorization).toBe('tma INIT');
   });
 
@@ -137,20 +154,20 @@ describe('api client', () => {
 
   it('updateLlmKey PATCHes /deploys/:id/llm-key with auth and body', async () => {
     const fetchFn = mockFetch({ ok: true, status: 200, body: { ok: true } });
-    const res = await updateLlmKey('d1', { provider_id: 'groq', api_key: 'sk-new' });
+    const res = await updateLlmKey('d1', { provider_id: 'openrouter', api_key: 'sk-new' });
 
     expect(res).toEqual({ ok: true });
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe('/deploys/d1/llm-key');
     expect(init.method).toBe('PATCH');
     expect(init.headers.Authorization).toBe('tma INIT');
-    expect(JSON.parse(init.body)).toEqual({ provider_id: 'groq', api_key: 'sk-new' });
+    expect(JSON.parse(init.body)).toEqual({ provider_id: 'openrouter', api_key: 'sk-new' });
   });
 
   it('updateLlmKey surfaces the server error code (422 invalid_key)', async () => {
     mockFetch({ ok: false, status: 422, body: { ok: false, code: 'invalid_key' } });
     await expect(
-      updateLlmKey('d1', { provider_id: 'groq', api_key: 'bad' }),
+      updateLlmKey('d1', { provider_id: 'openrouter', api_key: 'bad' }),
     ).rejects.toMatchObject({ status: 422, code: 'invalid_key' });
   });
 

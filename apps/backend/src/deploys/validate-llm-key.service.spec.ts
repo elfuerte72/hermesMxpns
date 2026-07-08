@@ -45,20 +45,20 @@ describe('ValidateLlmKeyService', () => {
   });
 
   it('returns ok with the catalog default model when all three probes pass', async () => {
-    const result = await service.validate({ provider_id: 'groq', api_key: 'sk-x' });
+    const result = await service.validate({ provider_id: 'openrouter', api_key: 'sk-x' });
 
     expect(result).toEqual({
       ok: true,
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-4o-mini',
       supports_tools: true,
       supports_streaming: true,
     });
     expect(post).toHaveBeenCalledTimes(3);
 
     const [chatUrl, chatBody, chatConfig] = post.mock.calls[0];
-    expect(chatUrl).toBe('https://api.groq.com/openai/v1/chat/completions');
+    expect(chatUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
     expect(chatBody).toEqual({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-4o-mini',
       messages: [{ role: 'user', content: 'ping' }],
       max_tokens: 1,
     });
@@ -80,9 +80,9 @@ describe('ValidateLlmKeyService', () => {
   });
 
   it('uses the body model override instead of the catalog default', async () => {
-    await service.validate({ provider_id: 'proxyapi', api_key: 'sk-p', model: 'gpt-4o' });
+    await service.validate({ provider_id: 'openrouter', api_key: 'sk-p', model: 'gpt-4o' });
 
-    expect(post.mock.calls[0][0]).toBe('https://api.proxyapi.ru/openai/v1/chat/completions');
+    expect(post.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/chat/completions');
     expect(post.mock.calls[0][1].model).toBe('gpt-4o');
   });
 
@@ -101,7 +101,7 @@ describe('ValidateLlmKeyService', () => {
   it.each([401, 403])('maps %i on the chat probe to 422 invalid_key', async (status) => {
     post.mockRejectedValue({ response: { status } });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-bad' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-bad' }));
 
     expect(err).toBeInstanceOf(UnprocessableEntityException);
     expect(err.getResponse()).toEqual({ ok: false, code: 'invalid_key' });
@@ -111,7 +111,7 @@ describe('ValidateLlmKeyService', () => {
   it.each([402, 429])('maps %i on the chat probe to 422 no_balance', async (status) => {
     post.mockRejectedValue({ response: { status } });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err).toBeInstanceOf(UnprocessableEntityException);
     expect(err.getResponse()).toEqual({ ok: false, code: 'no_balance' });
@@ -121,7 +121,7 @@ describe('ValidateLlmKeyService', () => {
     post.mockRejectedValue({ response: { status: 404 } });
 
     const err = await captureError(
-      service.validate({ provider_id: 'groq', api_key: 'sk-x', model: 'nope' }),
+      service.validate({ provider_id: 'openrouter', api_key: 'sk-x', model: 'nope' }),
     );
 
     expect(err).toBeInstanceOf(UnprocessableEntityException);
@@ -131,7 +131,7 @@ describe('ValidateLlmKeyService', () => {
   it('maps a network error on the chat probe to 502 provider_unreachable', async () => {
     post.mockRejectedValue(new Error('ECONNREFUSED'));
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err).toBeInstanceOf(BadGatewayException);
     expect(err.getResponse()).toEqual({ ok: false, code: 'provider_unreachable' });
@@ -144,7 +144,7 @@ describe('ValidateLlmKeyService', () => {
       return Promise.resolve({ data: {} });
     });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err).toBeInstanceOf(UnprocessableEntityException);
     expect(err.getResponse()).toEqual({
@@ -160,7 +160,7 @@ describe('ValidateLlmKeyService', () => {
       return Promise.resolve({ data: {} });
     });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err.getResponse()).toEqual({
       ok: false,
@@ -175,7 +175,7 @@ describe('ValidateLlmKeyService', () => {
       return Promise.resolve({ data: {} });
     });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err.getResponse()).toEqual({
       ok: false,
@@ -194,7 +194,7 @@ describe('ValidateLlmKeyService', () => {
       return Promise.resolve({ data: {} });
     });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err.getResponse()).toEqual({
       ok: false,
@@ -209,7 +209,7 @@ describe('ValidateLlmKeyService', () => {
       return Promise.resolve({ data: {} });
     });
 
-    const err = await captureError(service.validate({ provider_id: 'groq', api_key: 'sk-x' }));
+    const err = await captureError(service.validate({ provider_id: 'openrouter', api_key: 'sk-x' }));
 
     expect(err).toBeInstanceOf(BadGatewayException);
     expect(err.getResponse()).toEqual({ ok: false, code: 'provider_unreachable' });

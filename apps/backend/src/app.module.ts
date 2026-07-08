@@ -9,6 +9,9 @@ import { AuthModule } from './auth/auth.module';
 import { LlmProvidersModule } from './llm-providers/llm-providers.module';
 import { BotModule } from './bot/bot.module';
 import { DeploysModule } from './deploys/deploys.module';
+import { SubscriptionModule } from './subscription/subscription.module';
+import { OpenRouterKeysModule } from './openrouter-keys/openrouter-keys.module';
+import { TopupModule } from './deploys/topup/topup.module';
 import { WorkersModule } from './workers/workers.module';
 
 @Module({
@@ -21,6 +24,9 @@ import { WorkersModule } from './workers/workers.module';
     LlmProvidersModule,
     BotModule,
     DeploysModule,
+    SubscriptionModule,
+    OpenRouterKeysModule,
+    TopupModule,
     WorkersModule,
   ],
   controllers: [AppController],

@@ -13,18 +13,18 @@ describe('ValidateLlmKeyController', () => {
   it('POST /validate-llm-key delegates the dto to the service', async () => {
     service.validate.mockResolvedValue({
       ok: true,
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-4o-mini',
       supports_tools: true,
       supports_streaming: true,
     });
 
-    const dto = { provider_id: 'groq', api_key: 'sk-x' };
+    const dto = { provider_id: 'openrouter', api_key: 'sk-x' };
     const result = await controller.validate(dto);
 
     expect(service.validate).toHaveBeenCalledWith(dto);
     expect(result).toEqual({
       ok: true,
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-4o-mini',
       supports_tools: true,
       supports_streaming: true,
     });

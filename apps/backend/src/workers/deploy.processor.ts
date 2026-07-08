@@ -1,8 +1,9 @@
 import { Logger } from '@nestjs/common';
-import { LLM_PROVIDERS, type HostingerVirtualMachine } from '@hermes/shared';
+import { LLM_PROVIDERS, type HostingerVirtualMachine, type OpenRouterLimitReset } from '@hermes/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from '../provisioning/provisioning.service';
 import { SecretsService } from '../secrets/secrets.service';
+import { OpenRouterKeysService } from '../openrouter-keys/openrouter-keys.service';
 import { renderComposeFile, renderConfigYaml, renderEnvFile } from '../provisioning/hermes-config';
 import { errorStatus, withRetry, type RetryOptions } from '../common/retry';
 import { DeployNotifier } from './deploy-notifier';
@@ -11,6 +12,8 @@ import { DeployNotifier } from './deploy-notifier';
 export const HERMES_ITEM_ID = 'hostingercom-vps-kvm1-usd-1m';
 export const HERMES_TEMPLATE_ID = 1121;
 export const HERMES_DATA_CENTER_ID = 11;
+/** Default spend cap for a managed OpenRouter key (§23.5: $40 monthly). */
+export const OPENROUTER_DEFAULT_LIMIT_USD = 40;
 
 export function hermesProjectName(deployId: string): string {
   return `hermes-${deployId}`;
@@ -49,6 +52,10 @@ export interface DeployProcessorConfig {
   lateVmPollIntervalMs?: number;
   /** Poll attempts for that watch (~3 min at the default cadence). Default 12. */
   lateVmPollMaxAttempts?: number;
+  /** Spend cap (USD) for a minted managed OpenRouter key. Default $40 (§23.5). */
+  openrouterKeyLimitUsd?: number;
+  /** Reset cadence for a minted managed OpenRouter key. Default 'monthly'. */
+  openrouterKeyLimitReset?: OpenRouterLimitReset;
 }
 
 /**
@@ -67,6 +74,7 @@ export class DeployProcessor {
     private readonly secrets: SecretsService,
     private readonly notifier: DeployNotifier,
     private readonly config: DeployProcessorConfig,
+    private readonly openRouterKeys: OpenRouterKeysService,
   ) {}
 
   async process(deployId: string): Promise<void> {
@@ -95,6 +103,7 @@ export class DeployProcessor {
 
     let vmId: number | undefined;
     let adopted = false;
+    let mintedKeyHash: string | undefined;
     try {
       // 1. Acquire the VM: reuse a paid orphan if one exists, else purchase.
       // Purchase SPENDS REAL MONEY (guarded by DRY_RUN above); never retried.
@@ -132,17 +141,19 @@ export class DeployProcessor {
       });
       await this.log(deployId, 'vm_running', 'success', `ip ${ip ?? 'unknown'}`);
 
-      // 3. Push the Hermes compose project (secrets in the project .env) to the VM.
+      // 3. Resolve the LLM key (mint a managed OpenRouter key for the one-click
+      //    bundle, or reuse an existing/BYOK one), then push the Hermes project.
       const provider = LLM_PROVIDERS.find((p) => p.id === deploy.llm_provider);
       if (!provider) {
         throw new Error(`Unknown LLM provider "${deploy.llm_provider}"`);
       }
+      const { key: plaintextKey, mintedHash } = await this.resolveLlmKey(deployId, deploy);
+      if (mintedHash) mintedKeyHash = mintedHash;
       const env = renderEnvFile({
         botToken: this.secrets.decrypt(deploy.bot_token_enc),
         allowedUserId: deploy.user_id.toString(),
         keyEnv: provider.key_env,
-        llmKey: this.secrets.decrypt(deploy.llm_key_enc),
-        baseUrl: deploy.llm_base_url ?? provider.base_url,
+        llmKey: plaintextKey,
       });
       const configYaml = renderConfigYaml({
         provider: provider.id,
@@ -178,8 +189,46 @@ export class DeployProcessor {
       }
       this.logger.log(`deploy ${deployId} is ready (@${deploy.bot_username})`);
     } catch (err) {
-      await this.fail(deployId, deploy.user_id, vmId, adopted, err);
+      await this.fail(deployId, deploy.user_id, vmId, adopted, err, mintedKeyHash);
     }
+  }
+
+  /**
+   * Resolve the plaintext LLM key for a deploy:
+   *  - reuse a previously minted managed key (retry after a partial failure),
+   *  - use a BYOK key supplied at creation (hidden "Advanced" custom path),
+   *  - or mint a new managed OpenRouter key now that the VM is up (one-click).
+   * Minting is not retried (not idempotent, like purchaseVM). Returns the
+   * `mintedHash` only when a fresh key was created, so the caller can clean it up
+   * on failure.
+   */
+  private async resolveLlmKey(
+    deployId: string,
+    deploy: { openrouter_key_hash: string | null; llm_key_enc: string | null },
+  ): Promise<{ key: string; mintedHash?: string }> {
+    if (deploy.openrouter_key_hash) {
+      if (!deploy.llm_key_enc) {
+        throw new Error('openrouter_key_hash set but llm_key_enc is missing');
+      }
+      return { key: this.secrets.decrypt(deploy.llm_key_enc) };
+    }
+    if (deploy.llm_key_enc) {
+      return { key: this.secrets.decrypt(deploy.llm_key_enc) };
+    }
+    const created = await this.openRouterKeys.createKey({
+      name: hermesProjectName(deployId),
+      limit: this.config.openrouterKeyLimitUsd ?? OPENROUTER_DEFAULT_LIMIT_USD,
+      limitReset: this.config.openrouterKeyLimitReset ?? 'monthly',
+    });
+    await this.prisma.deploy.update({
+      where: { id: deployId },
+      data: {
+        llm_key_enc: this.secrets.encrypt(created.key),
+        openrouter_key_hash: created.hash,
+      },
+    });
+    await this.log(deployId, 'create_key', 'success', `openrouter key ${created.hash}`);
+    return { key: created.key, mintedHash: created.hash };
   }
 
   /**
@@ -339,9 +388,11 @@ export class DeployProcessor {
   }
 
   /**
-   * Roll back a freshly purchased VM so a failed deploy never leaves an orphan.
-   * An adopted (already-paid) VM is kept — deleting it would waste money and rob
-   * the next retry of a machine it could reuse via self-heal.
+   * Roll back a freshly purchased VM (and a freshly minted OpenRouter key) so a
+   * failed deploy never leaves orphans. An adopted (already-paid) VM is kept —
+   * deleting it would waste money and rob the next retry of a machine it could
+   * reuse via self-heal. A minted key is always deleted: it has no reuse value
+   * and a fresh one is minted on the next attempt.
    */
   private async fail(
     deployId: string,
@@ -349,6 +400,7 @@ export class DeployProcessor {
     vmId: number | undefined,
     adopted: boolean,
     err: unknown,
+    mintedKeyHash?: string,
   ): Promise<void> {
     const reason = err instanceof Error ? err.message : String(err);
     this.logger.error(`deploy ${deployId} failed: ${reason}`);
@@ -360,6 +412,15 @@ export class DeployProcessor {
       );
     } else if (vmId !== undefined) {
       await this.log(deployId, 'cleanup_vm', 'skipped', `kept adopted vm ${vmId} for retry`);
+    }
+
+    if (mintedKeyHash) {
+      try {
+        await this.openRouterKeys.deleteKey(mintedKeyHash);
+        await this.log(deployId, 'cleanup_key', 'success', `deleted openrouter key ${mintedKeyHash}`);
+      } catch (keyErr) {
+        await this.log(deployId, 'cleanup_key', 'error', `failed to delete key: ${String(keyErr)}`);
+      }
     }
 
     await this.prisma.deploy.update({ where: { id: deployId }, data: { status: 'failed' } });

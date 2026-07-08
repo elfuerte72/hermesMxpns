@@ -2,13 +2,13 @@ import { useState, type ReactElement } from 'react';
 import { MenuScreen } from './components/MenuScreen';
 import { AboutScreen } from './components/AboutScreen';
 import { BotTokenStep } from './components/BotTokenStep';
-import { ProviderStep } from './components/ProviderStep';
+import { PaymentStep } from './components/PaymentStep';
 import { DeployStatusView } from './components/DeployStatusView';
 import { AgentsListScreen } from './components/AgentsListScreen';
 import { AgentDetailScreen } from './components/AgentDetailScreen';
 import { hapticImpact } from './telegram';
 
-type Screen = 'menu' | 'about' | 'step1' | 'step2' | 'status' | 'agents' | 'agent';
+type Screen = 'menu' | 'about' | 'step1' | 'pay' | 'status' | 'agents' | 'agent';
 
 export function App(): ReactElement {
   const [screen, setScreen] = useState<Screen>('menu');
@@ -56,11 +56,11 @@ export function App(): ReactElement {
           onTokenChange={setBotToken}
           onValidated={setBotUsername}
           onBack={() => go('menu')}
-          onNext={() => go('step2')}
+          onNext={() => go('pay')}
         />
       )}
-      {screen === 'step2' && (
-        <ProviderStep botToken={botToken} onBack={() => go('step1')} onDeployed={handleDeployed} />
+      {screen === 'pay' && (
+        <PaymentStep botToken={botToken} onBack={() => go('step1')} onDeployed={handleDeployed} />
       )}
       {screen === 'status' && deployId && (
         <DeployStatusView deployId={deployId} onReset={handleReset} />

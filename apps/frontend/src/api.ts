@@ -4,6 +4,10 @@ import type {
   DeployView,
   LlmProvider,
   RestartResponse,
+  SubscriptionStatusResponse,
+  TopupResponse,
+  TopupTierView,
+  UpdateBotTokenResponse,
   UpdateLlmKeyRequest,
   UpdateLlmKeyResponse,
   ValidateBotTokenResponse,
@@ -121,4 +125,33 @@ export function updateLlmKey(id: string, body: UpdateLlmKeyRequest): Promise<Upd
 
 export function deleteDeploy(id: string): Promise<DeployView> {
   return request<DeployView>(`/deploys/${id}`, { method: 'DELETE', auth: true });
+}
+
+export function getSubscriptionStatus(): Promise<SubscriptionStatusResponse> {
+  return request<SubscriptionStatusResponse>('/subscription/status', { auth: true });
+}
+
+/** Force a live `getChatMember` check — call after the user returns from @tribute. */
+export function checkSubscription(): Promise<SubscriptionStatusResponse> {
+  return request<SubscriptionStatusResponse>('/subscription/check', { method: 'POST', auth: true });
+}
+
+export function getTopupTiers(): Promise<TopupTierView[]> {
+  return request<TopupTierView[]>('/deploys/topup/tiers', { auth: true });
+}
+
+export function topupDeploy(deployId: string, amountUsd: number): Promise<TopupResponse> {
+  return request<TopupResponse>('/deploys/topup', {
+    method: 'POST',
+    body: { deploy_id: deployId, amount_usd: amountUsd },
+    auth: true,
+  });
+}
+
+export function updateBotToken(deployId: string, botToken: string): Promise<UpdateBotTokenResponse> {
+  return request<UpdateBotTokenResponse>(`/deploys/${deployId}/bot-token`, {
+    method: 'PATCH',
+    body: { bot_token: botToken },
+    auth: true,
+  });
 }

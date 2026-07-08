@@ -1,9 +1,18 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DeployView, LlmProvider } from '@hermes/shared';
-import { deleteDeploy, fetchProviders, getDeploy, restartDeploy, updateLlmKey } from '../api';
+import type { DeployView, LlmProvider, TopupTierView } from '@hermes/shared';
+import {
+  deleteDeploy,
+  fetchProviders,
+  getDeploy,
+  getTopupTiers,
+  restartDeploy,
+  topupDeploy,
+  updateBotToken,
+  updateLlmKey,
+} from '../api';
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from '../deploy-status';
 import { errorMessage, llmKeyErrorMessage } from '../error-messages';
-import { hapticImpact, openBotChat } from '../telegram';
+import { hapticImpact, openBotChat, openTelegramUrl } from '../telegram';
 import { providerMeta } from './ProviderStep';
 import { BackLink, PixelButton, PixelInput } from './ui';
 
@@ -28,6 +37,8 @@ export function AgentDetailScreen({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [llmOpen, setLlmOpen] = useState(false);
+  const [topupOpen, setTopupOpen] = useState(false);
+  const [botTokenOpen, setBotTokenOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -110,6 +121,13 @@ export function AgentDetailScreen({
         </span>
       </div>
 
+      {deploy?.bot_token_status === 'invalid' && (
+        <p className="border-2 border-alarm p-2.5 text-[9px] tracking-wide text-alarm">
+          ⚠ Токен бота невалиден — возможно, бот удалён в @BotFather. Смени токен ниже, VPS и ключи
+          сохранятся.
+        </p>
+      )}
+
       {loadError && <p className="text-[8px] tracking-wide text-alarm">{loadError}</p>}
 
       {ready && deploy && (
@@ -139,6 +157,27 @@ export function AgentDetailScreen({
           setLlmOpen((v) => !v);
         }}
         onUpdated={(view) => setDeploy(view)}
+      />
+
+      <TopupBlock
+        deployId={deployId}
+        ready={ready}
+        open={topupOpen}
+        onToggle={() => {
+          hapticImpact('light');
+          setTopupOpen((v) => !v);
+        }}
+      />
+
+      <BotTokenBlock
+        deployId={deployId}
+        ready={ready}
+        open={botTokenOpen}
+        onToggle={() => {
+          hapticImpact('light');
+          setBotTokenOpen((v) => !v);
+        }}
+        onUpdated={() => void getDeploy(deployId).then(setDeploy).catch(() => {})}
       />
 
       <div className="mt-auto flex flex-col gap-2.5 pb-3">
@@ -360,6 +399,200 @@ function LlmKeyBlock({ deployId, ready, open, onToggle, onUpdated }: LlmKeyBlock
 
       <PixelButton variant="accent" disabled={!canSubmit} onClick={() => void handleSubmit()}>
         {state === 'saving' ? 'Проверяем ключ…' : 'Сохранить ключ'}
+      </PixelButton>
+    </div>
+  );
+}
+
+interface TopupBlockProps {
+  deployId: string;
+  ready: boolean;
+  open: boolean;
+  onToggle: () => void;
+}
+
+type TopupState = 'idle' | 'pending' | 'success';
+
+function TopupBlock({ deployId, ready, open, onToggle }: TopupBlockProps): ReactElement {
+  const [tiers, setTiers] = useState<TopupTierView[]>([]);
+  const [selected, setSelected] = useState<TopupTierView | null>(null);
+  const [state, setState] = useState<TopupState>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || tiers.length > 0) return;
+    getTopupTiers()
+      .then(setTiers)
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, [open, tiers.length]);
+
+  async function handleTopup(): Promise<void> {
+    if (!selected) return;
+    hapticImpact('medium');
+    setState('pending');
+    setError(null);
+    try {
+      await topupDeploy(deployId, selected.amount_usd);
+      setState('success');
+    } catch (err) {
+      setError(errorMessage(err));
+      setState('idle');
+    }
+  }
+
+  if (!ready) return <></>;
+
+  if (!open) {
+    return (
+      <PixelButton variant="outline" onClick={onToggle}>
+        Пополнить токены
+      </PixelButton>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5 border-2 border-edge p-3.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-left text-[10px] tracking-wide text-dim uppercase"
+      >
+        ▾ Пополнить токены
+      </button>
+
+      {tiers.length === 0 && (
+        <p className="text-[8px] leading-relaxed text-dim">Доплата пока не настроена.</p>
+      )}
+
+      <div className="flex flex-col gap-2">
+        {tiers.map((t) => {
+          const isActive = selected?.amount_usd === t.amount_usd;
+          return (
+            <button
+              key={t.amount_usd}
+              type="button"
+              onClick={() => {
+                setSelected(t);
+                setState('idle');
+                setError(null);
+              }}
+              className={`flex items-center justify-between gap-2 border-2 p-3 text-left text-[10px] ${
+                isActive ? 'border-accent' : 'border-edge'
+              }`}
+            >
+              <span>
+                {isActive && <span className="text-accent">► </span>}+${t.amount_usd}
+              </span>
+              <span className="text-[9px] text-dim">${t.price_usd}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {selected && (
+        <PixelButton variant="outline" onClick={() => openTelegramUrl(selected.subscribe_url)}>
+          Оплатить ${selected.price_usd} в @tribute →
+        </PixelButton>
+      )}
+
+      {state === 'success' && (
+        <p className="text-[8px] tracking-wide text-ok">✓ лимит поднят · агент работает дальше</p>
+      )}
+      {error && <p className="text-[8px] tracking-wide text-alarm">{error}</p>}
+
+      <PixelButton
+        variant="accent"
+        disabled={!selected || state === 'pending'}
+        onClick={() => void handleTopup()}
+      >
+        {state === 'pending' ? 'Пополняем…' : '✓ Я оплатил — поднять лимит'}
+      </PixelButton>
+    </div>
+  );
+}
+
+interface BotTokenBlockProps {
+  deployId: string;
+  ready: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onUpdated: () => void;
+}
+
+type BotTokenState = 'idle' | 'saving' | 'success';
+
+function BotTokenBlock({
+  deployId,
+  ready,
+  open,
+  onToggle,
+  onUpdated,
+}: BotTokenBlockProps): ReactElement {
+  const [token, setToken] = useState('');
+  const [state, setState] = useState<BotTokenState>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(): Promise<void> {
+    hapticImpact('medium');
+    setState('saving');
+    setError(null);
+    try {
+      await updateBotToken(deployId, token.trim());
+      setState('success');
+      setToken('');
+      onUpdated();
+    } catch (err) {
+      setError(errorMessage(err));
+      setState('idle');
+    }
+  }
+
+  if (!ready) return <></>;
+
+  if (!open) {
+    return (
+      <PixelButton variant="outline" onClick={onToggle}>
+        Сменить токен бота
+      </PixelButton>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5 border-2 border-edge p-3.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-left text-[10px] tracking-wide text-dim uppercase"
+      >
+        ▾ Сменить токен бота
+      </button>
+      <p className="text-[8px] leading-relaxed text-dim">
+        Если удалил бота в @BotFather — создай нового и вставь новый токен сюда. VPS и ключи
+        сохранятся, агент перезапустится с новым ботом.
+      </p>
+      <PixelButton variant="outline" onClick={() => openTelegramUrl('https://t.me/botfather')}>
+        Открыть @BotFather →
+      </PixelButton>
+      <PixelInput
+        type="text"
+        value={token}
+        onChange={(e) => {
+          setToken(e.target.value);
+          setState('idle');
+          setError(null);
+        }}
+        placeholder="123456:ABC-DEF…"
+      />
+      {state === 'success' && (
+        <p className="text-[8px] tracking-wide text-ok">✓ токен обновлён · агент перезапускается</p>
+      )}
+      {error && <p className="text-[8px] tracking-wide text-alarm">{error}</p>}
+      <PixelButton
+        variant="accent"
+        disabled={token.trim().length === 0 || state === 'saving'}
+        onClick={() => void handleSubmit()}
+      >
+        {state === 'saving' ? 'Сохраняем…' : 'Сохранить токен'}
       </PixelButton>
     </div>
   );

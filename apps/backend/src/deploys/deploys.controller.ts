@@ -15,6 +15,7 @@ import type {
   CreateDeployResponse,
   DeployView,
   RestartResponse,
+  UpdateBotTokenResponse,
   UpdateLlmKeyResponse,
 } from '@hermes/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -23,6 +24,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { DeploysService } from './deploys.service';
 import { createDeploySchema, type CreateDeployDto } from './create-deploy.dto';
 import { validateLlmKeySchema, type ValidateLlmKeyDto } from './validate-llm-key.dto';
+import { updateBotTokenSchema, type UpdateBotTokenDto } from './bot-token.dto';
 
 @Controller('deploys')
 @UseGuards(TmaAuthGuard)
@@ -67,6 +69,15 @@ export class DeploysController {
     @Body(new ZodValidationPipe(validateLlmKeySchema)) dto: ValidateLlmKeyDto,
   ): Promise<UpdateLlmKeyResponse> {
     return this.deploysService.updateLlmKey(user, id, dto);
+  }
+
+  @Patch(':id/bot-token')
+  updateBotToken(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateBotTokenSchema)) dto: UpdateBotTokenDto,
+  ): Promise<UpdateBotTokenResponse> {
+    return this.deploysService.updateBotToken(user, id, dto);
   }
 
   @Delete(':id')

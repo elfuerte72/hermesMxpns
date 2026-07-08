@@ -14,6 +14,8 @@ import {
 } from './deploy.processor';
 
 const TEST_KEY = 'a'.repeat(64);
+const MINTED_KEY = 'sk-or-v1-managed';
+const MINTED_HASH = 'or-key-hash';
 
 function makeVm(
   state: HostingerVmState,
@@ -72,8 +74,10 @@ describe('DeployProcessor', () => {
     deleteVM: jest.Mock;
   };
   let notifier: { deployFailed: jest.Mock; deployReady: jest.Mock };
+  let openRouterKeys: { createKey: jest.Mock; deleteKey: jest.Mock };
   let config: DeployProcessorConfig;
 
+  // Default row = one-click managed bundle: openrouter, no key yet (worker mints it).
   function makeDeployRow(overrides: Record<string, unknown> = {}) {
     return {
       id: 'deploy-1',
@@ -81,8 +85,9 @@ describe('DeployProcessor', () => {
       status: 'pending',
       bot_username: 'coolbot',
       bot_token_enc: secrets.encrypt('123456:abc'),
-      llm_key_enc: secrets.encrypt('sk-groq'),
-      llm_provider: 'groq',
+      llm_key_enc: null,
+      openrouter_key_hash: null,
+      llm_provider: 'openrouter',
       llm_base_url: null,
       llm_model: null,
       ...overrides,
@@ -90,10 +95,14 @@ describe('DeployProcessor', () => {
   }
 
   function makeProcessor(overrides: Partial<DeployProcessorConfig> = {}): DeployProcessor {
-    return new DeployProcessor(prisma as never, provisioning as never, secrets, notifier as never, {
-      ...config,
-      ...overrides,
-    });
+    return new DeployProcessor(
+      prisma as never,
+      provisioning as never,
+      secrets,
+      notifier as never,
+      { ...config, ...overrides },
+      openRouterKeys as never,
+    );
   }
 
   beforeEach(() => {
@@ -122,6 +131,10 @@ describe('DeployProcessor', () => {
       deployFailed: jest.fn().mockResolvedValue(undefined),
       deployReady: jest.fn().mockResolvedValue(undefined),
     };
+    openRouterKeys = {
+      createKey: jest.fn().mockResolvedValue({ key: MINTED_KEY, hash: MINTED_HASH }),
+      deleteKey: jest.fn().mockResolvedValue(undefined),
+    };
     config = {
       dryRun: false,
       pollIntervalMs: 1,
@@ -149,12 +162,6 @@ describe('DeployProcessor', () => {
       where: { id: 'deploy-1' },
       data: { vm_ip: '203.0.113.9', status: 'configuring' },
     });
-    expect(provisioning.createDockerProject).toHaveBeenCalledWith(
-      777,
-      hermesProjectName('deploy-1'),
-      expect.stringContaining('nousresearch/hermes-agent'),
-      expect.stringContaining('TELEGRAM_BOT_TOKEN=123456:abc'),
-    );
     expect(prisma.deploy.updateMany).toHaveBeenCalledWith({
       where: { id: 'deploy-1', status: 'configuring' },
       data: { status: 'ready' },
@@ -163,33 +170,54 @@ describe('DeployProcessor', () => {
     expect(notifier.deployFailed).not.toHaveBeenCalled();
   });
 
-  it('sends decrypted secrets in the project env, not in the compose content', async () => {
+  it('mints a managed OpenRouter key after the VM is up and persists hash + encrypted key', async () => {
+    await makeProcessor().process('deploy-1');
+
+    expect(openRouterKeys.createKey).toHaveBeenCalledWith({
+      name: hermesProjectName('deploy-1'),
+      limit: 40,
+      limitReset: 'monthly',
+    });
+    const keyUpdate = prisma.deploy.update.mock.calls.find(
+      (c) => c[0].data?.openrouter_key_hash === MINTED_HASH,
+    );
+    expect(keyUpdate).toBeDefined();
+    expect(secrets.decrypt(keyUpdate![0].data.llm_key_enc)).toBe(MINTED_KEY);
+  });
+
+  it('sends the minted key in the project env, not in the compose content', async () => {
     await makeProcessor().process('deploy-1');
 
     const [, , compose, env] = provisioning.createDockerProject.mock.calls[0];
     expect(env).toContain('TELEGRAM_BOT_TOKEN=123456:abc');
-    expect(env).toContain('GROQ_API_KEY=sk-groq');
+    expect(env).toContain('OPENROUTER_API_KEY=sk-or-v1-managed');
     expect(env).toContain('TELEGRAM_ALLOWED_USERS=42');
     expect(compose).not.toContain('123456:abc');
-    expect(compose).not.toContain('sk-groq');
-    expect(compose).toContain('base_url: "https://api.groq.com/openai/v1"');
-    expect(compose).toContain('key_env: "GROQ_API_KEY"');
+    expect(compose).not.toContain('sk-or-v1-managed');
+    expect(compose).toContain('base_url: "https://openrouter.ai/api/v1"');
+    expect(compose).toContain('key_env: "OPENROUTER_API_KEY"');
   });
 
-  it('renders OPENAI_BASE_URL in the project env for OPENAI_API_KEY providers', async () => {
-    prisma.deploy.findUnique.mockResolvedValue(makeDeployRow({ llm_provider: 'proxyapi' }));
+  it('reuses an already-minted managed key on a retry (no second createKey)', async () => {
+    prisma.deploy.findUnique.mockResolvedValue(
+      makeDeployRow({
+        openrouter_key_hash: MINTED_HASH,
+        llm_key_enc: secrets.encrypt(MINTED_KEY),
+      }),
+    );
 
     await makeProcessor().process('deploy-1');
 
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     const env = provisioning.createDockerProject.mock.calls[0][3];
-    expect(env).toContain('OPENAI_API_KEY=sk-groq');
-    expect(env).toContain('OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1');
+    expect(env).toContain('OPENROUTER_API_KEY=sk-or-v1-managed');
   });
 
-  it('uses the deploy llm_base_url/llm_model overrides for the custom provider', async () => {
+  it('uses a BYOK key supplied at creation (custom provider) without minting', async () => {
     prisma.deploy.findUnique.mockResolvedValue(
       makeDeployRow({
         llm_provider: 'custom',
+        llm_key_enc: secrets.encrypt('sk-byok'),
         llm_base_url: 'https://llm.example.com/v1',
         llm_model: 'my-model',
       }),
@@ -197,7 +225,9 @@ describe('DeployProcessor', () => {
 
     await makeProcessor().process('deploy-1');
 
-    const compose = provisioning.createDockerProject.mock.calls[0][2];
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
+    const [, , compose, env] = provisioning.createDockerProject.mock.calls[0];
+    expect(env).toContain('CUSTOM_API_KEY=sk-byok');
     expect(compose).toContain('base_url: "https://llm.example.com/v1"');
     expect(compose).toContain('default: "my-model"');
   });
@@ -221,6 +251,7 @@ describe('DeployProcessor', () => {
     expect(prisma.deploy.updateMany).not.toHaveBeenCalled();
     expect(provisioning.purchaseVM).not.toHaveBeenCalled();
     expect(provisioning.createDockerProject).not.toHaveBeenCalled();
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.provisioningLog.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ step: 'dry_run' }) }),
     );
@@ -257,13 +288,14 @@ describe('DeployProcessor', () => {
     await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1');
 
     expect(provisioning.getVM).toHaveBeenCalledTimes(1);
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
     });
   });
 
-  it('does not retry purchaseVM and marks failed when it throws (no VM yet)', async () => {
+  it('does not retry purchaseVM and marks failed when it throws (no VM, no key)', async () => {
     provisioning.purchaseVM.mockRejectedValue({ response: { status: 500 } });
 
     await makeProcessor({ retries: 3, retryBaseDelayMs: 1 }).process('deploy-1');
@@ -271,6 +303,7 @@ describe('DeployProcessor', () => {
     expect(provisioning.purchaseVM).toHaveBeenCalledTimes(1);
     expect(provisioning.listVMs).toHaveBeenCalledTimes(1);
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -298,7 +331,7 @@ describe('DeployProcessor', () => {
     expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
   });
 
-  it('keeps an adopted VM (does not delete it) when the deploy fails', async () => {
+  it('keeps an adopted VM (does not delete it) when the deploy fails, but deletes the minted key', async () => {
     provisioning.listVMs.mockResolvedValue([
       makeVm('running', ['5.5.5.5'], 1806, {
         plan: 'KVM 1',
@@ -310,6 +343,7 @@ describe('DeployProcessor', () => {
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).not.toHaveBeenCalled();
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith(MINTED_HASH);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -323,7 +357,6 @@ describe('DeployProcessor', () => {
         created_at: new Date().toISOString(),
       }),
     ]);
-    // The active-claim query filters out the failed deploy, so it returns empty.
     prisma.deploy.findMany.mockResolvedValue([]);
 
     await makeProcessor().process('deploy-1');
@@ -375,7 +408,7 @@ describe('DeployProcessor', () => {
     expect(notifier.deployFailed).not.toHaveBeenCalled();
   });
 
-  it('fails and cleans up the VM when setupVM errors out', async () => {
+  it('fails and cleans up the VM (no key minted yet) when setupVM errors out', async () => {
     provisioning.purchaseVM.mockResolvedValue({
       orderId: 1,
       virtualMachine: makeVm('initial', []),
@@ -385,6 +418,7 @@ describe('DeployProcessor', () => {
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -442,6 +476,7 @@ describe('DeployProcessor', () => {
       expect(provisioning.listVMs).toHaveBeenCalledTimes(4);
       expect(provisioning.setupVM).not.toHaveBeenCalled();
       expect(provisioning.deleteVM).not.toHaveBeenCalled();
+      expect(openRouterKeys.createKey).not.toHaveBeenCalled();
       expect(prisma.deploy.update).toHaveBeenCalledWith({
         where: { id: 'deploy-1' },
         data: { status: 'failed' },
@@ -484,12 +519,13 @@ describe('DeployProcessor', () => {
     });
   });
 
-  it('deletes the VM when the VM enters an error state', async () => {
+  it('deletes the VM (no key minted yet) when the VM enters an error state', async () => {
     provisioning.getVM.mockResolvedValue(makeVm('error', []));
 
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -508,12 +544,13 @@ describe('DeployProcessor', () => {
     expect(notifier.deployReady).toHaveBeenCalled();
   });
 
-  it('cleans up the VM and fails when createDockerProject errors out', async () => {
+  it('cleans up the VM and the minted key when createDockerProject errors out', async () => {
     provisioning.createDockerProject.mockRejectedValue({ response: { status: 400 } });
 
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith(MINTED_HASH);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -537,12 +574,13 @@ describe('DeployProcessor', () => {
     expect(notifier.deployReady).toHaveBeenCalledWith(42n, 'coolbot');
   });
 
-  it('fails when a project container exits before becoming ready', async () => {
+  it('cleans up VM + key when a project container exits before becoming ready', async () => {
     provisioning.getDockerProjectContainers.mockResolvedValue([makeContainer('exited')]);
 
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith(MINTED_HASH);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -550,13 +588,14 @@ describe('DeployProcessor', () => {
     expect(notifier.deployReady).not.toHaveBeenCalled();
   });
 
-  it('times out (and cleans up) when no container ever runs', async () => {
+  it('times out (and cleans up VM + key) when no container ever runs', async () => {
     provisioning.getDockerProjectContainers.mockResolvedValue([makeContainer('created')]);
 
     await makeProcessor({ pollMaxAttempts: 3 }).process('deploy-1');
 
     expect(provisioning.getDockerProjectContainers).toHaveBeenCalledTimes(3);
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.deleteKey).toHaveBeenCalledWith(MINTED_HASH);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },
@@ -577,12 +616,13 @@ describe('DeployProcessor', () => {
     });
   });
 
-  it('fails on an unknown LLM provider and cleans up the VM', async () => {
+  it('fails on an unknown LLM provider and cleans up the VM (no key minted)', async () => {
     prisma.deploy.findUnique.mockResolvedValue(makeDeployRow({ llm_provider: 'nope' }));
 
     await makeProcessor().process('deploy-1');
 
     expect(provisioning.createDockerProject).not.toHaveBeenCalled();
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
@@ -597,6 +637,7 @@ describe('DeployProcessor', () => {
 
     expect(provisioning.getVM).toHaveBeenCalledTimes(3);
     expect(provisioning.deleteVM).toHaveBeenCalledWith(777);
+    expect(openRouterKeys.createKey).not.toHaveBeenCalled();
     expect(prisma.deploy.update).toHaveBeenCalledWith({
       where: { id: 'deploy-1' },
       data: { status: 'failed' },

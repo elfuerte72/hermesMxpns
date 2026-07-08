@@ -79,7 +79,7 @@ describe('App routing', () => {
       id: 'd-1',
       agent: 'hermes',
       bot_username: 'mybot',
-      llm_provider: 'groq',
+      llm_provider: 'openrouter',
       status: 'ready',
       vm_ip: '1.2.3.4',
       created_at: '2026-07-04T10:00:00Z',

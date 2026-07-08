@@ -5,11 +5,7 @@ import { SecretsService } from '../secrets/secrets.service';
 import type { CreateDeployDto } from './create-deploy.dto';
 
 const USER: AuthenticatedUser = { telegram_id: '12345', username: 'alice' };
-const DTO: CreateDeployDto = {
-  bot_token: '123456:abc',
-  llm_provider: 'groq',
-  llm_key: 'sk-secret',
-};
+const CHANNEL_ID = -1001234567890n;
 // 32-byte test key (64 hex) — real AES-256-GCM encryption in the assertions below.
 const TEST_KEY = 'a'.repeat(64);
 
@@ -30,7 +26,22 @@ describe('DeploysService', () => {
   let teardownQueue: { enqueueTeardown: jest.Mock };
   let provisioning: { restartDockerProject: jest.Mock; updateDockerProject: jest.Mock };
   let validateLlmKey: { validate: jest.Mock };
+  let subscription: { isGatingEnabled: jest.Mock; getLiveStatus: jest.Mock };
   let service: DeploysService;
+
+  function makeService(channelId: bigint | null = null): DeploysService {
+    return new DeploysService(
+      prisma as never,
+      secrets,
+      validateBotToken as never,
+      queue as never,
+      teardownQueue as never,
+      provisioning as never,
+      validateLlmKey as never,
+      subscription as never,
+      channelId,
+    );
+  }
 
   beforeEach(() => {
     prisma = {
@@ -52,27 +63,118 @@ describe('DeploysService', () => {
       updateDockerProject: jest.fn().mockResolvedValue(undefined),
     };
     validateLlmKey = { validate: jest.fn().mockResolvedValue({ ok: true }) };
-    service = new DeploysService(
-      prisma as never,
-      secrets,
-      validateBotToken as never,
-      queue as never,
-      teardownQueue as never,
-      provisioning as never,
-      validateLlmKey as never,
-    );
+    subscription = {
+      isGatingEnabled: jest.fn().mockReturnValue(false),
+      getLiveStatus: jest.fn().mockResolvedValue('active'),
+    };
+    service = makeService();
   });
 
-  it('validates the bot token, persists a pending deploy and enqueues the job', async () => {
-    const result = await service.create(USER, DTO);
+  describe('create — one-click bundle', () => {
+    const ONE_CLICK: CreateDeployDto = { bot_token: '123456:abc' };
 
-    expect(validateBotToken.validate).toHaveBeenCalledWith('123456:abc');
-    expect(result).toEqual({ deploy_id: 'deploy-1', status: 'pending' });
-    expect(queue.enqueueDeploy).toHaveBeenCalledTimes(1);
+    it('validates the bot token, persists a pending openrouter deploy (no key) and enqueues', async () => {
+      const result = await service.create(USER, ONE_CLICK);
+
+      expect(validateBotToken.validate).toHaveBeenCalledWith('123456:abc');
+      expect(result).toEqual({ deploy_id: 'deploy-1', status: 'pending' });
+      const data = prisma.deploy.create.mock.calls[0][0].data;
+      expect(data.llm_provider).toBe('openrouter');
+      expect(data.llm_key_enc).toBeNull();
+      expect(data.bot_username).toBe('mybot');
+      expect(data.user_id).toBe(12345n);
+      expect(queue.enqueueDeploy).toHaveBeenCalledWith({ deployId: 'deploy-1' });
+    });
+
+    it('stores the encrypted bot token but never the plaintext', async () => {
+      await service.create(USER, ONE_CLICK);
+      const data = prisma.deploy.create.mock.calls[0][0].data;
+      expect(secrets.decrypt(data.bot_token_enc)).toBe('123456:abc');
+      const serialized = JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      expect(serialized).not.toContain('123456:abc');
+      expect(data).not.toHaveProperty('bot_token');
+    });
+
+    it('does not require an llm_key or llm_provider in the body', async () => {
+      await service.create(USER, ONE_CLICK);
+      const data = prisma.deploy.create.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('llm_key');
+      expect(data.llm_key_enc).toBeNull();
+    });
+
+    it('skips the subscription gate when gating is disabled (dev)', async () => {
+      await service.create(USER, ONE_CLICK);
+      expect(subscription.isGatingEnabled).toHaveBeenCalled();
+      expect(subscription.getLiveStatus).not.toHaveBeenCalled();
+      expect(prisma.deploy.create.mock.calls[0][0].data.subscription_status).toBeNull();
+    });
+
+    it('requires an active subscription when gating is enabled and stamps it on the deploy', async () => {
+      subscription.isGatingEnabled.mockReturnValue(true);
+      subscription.getLiveStatus.mockResolvedValue('active');
+      service = makeService(CHANNEL_ID);
+
+      await service.create(USER, ONE_CLICK);
+
+      expect(subscription.getLiveStatus).toHaveBeenCalledWith(USER);
+      const data = prisma.deploy.create.mock.calls[0][0].data;
+      expect(data.subscription_status).toBe('active');
+      expect(data.subscription_channel_id).toBe(CHANNEL_ID);
+    });
+
+    it.each(['expired', 'none'] as const)('blocks creation with 402 when subscription is %s', async (status) => {
+      subscription.isGatingEnabled.mockReturnValue(true);
+      subscription.getLiveStatus.mockResolvedValue(status);
+      service = makeService(CHANNEL_ID);
+
+      await expect(service.create(USER, ONE_CLICK)).rejects.toMatchObject({
+        status: 402,
+      });
+      expect(prisma.deploy.create).not.toHaveBeenCalled();
+      expect(queue.enqueueDeploy).not.toHaveBeenCalled();
+    });
+
+    it('does not create a deploy or enqueue when the bot token is invalid (422)', async () => {
+      validateBotToken.validate.mockRejectedValue(new UnprocessableEntityException());
+
+      await expect(service.create(USER, ONE_CLICK)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(prisma.deploy.create).not.toHaveBeenCalled();
+      expect(queue.enqueueDeploy).not.toHaveBeenCalled();
+    });
+
+    it('propagates a 409 when the bot is already used by an active deploy', async () => {
+      validateBotToken.validate.mockRejectedValue(new ConflictException());
+
+      await expect(service.create(USER, ONE_CLICK)).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.deploy.create).not.toHaveBeenCalled();
+      expect(queue.enqueueDeploy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('create — BYOK (hidden Advanced)', () => {
+    it('encrypts and stores a user-supplied custom key with base_url and model', async () => {
+      const byok: CreateDeployDto = {
+        bot_token: '123456:abc',
+        llm_provider: 'custom',
+        llm_key: 'sk-secret',
+        llm_base_url: 'https://llm.example.com/v1',
+        llm_model: 'my-model',
+      };
+
+      await service.create(USER, byok);
+
+      const data = prisma.deploy.create.mock.calls[0][0].data;
+      expect(data.llm_provider).toBe('custom');
+      expect(data.llm_base_url).toBe('https://llm.example.com/v1');
+      expect(data.llm_model).toBe('my-model');
+      expect(secrets.decrypt(data.llm_key_enc)).toBe('sk-secret');
+      const serialized = JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      expect(serialized).not.toContain('sk-secret');
+    });
   });
 
   it('upserts the user before creating the deploy (FK safety)', async () => {
-    await service.create(USER, DTO);
+    await service.create(USER, { bot_token: '123456:abc' });
     expect(prisma.user.upsert).toHaveBeenCalledWith({
       where: { telegram_id: 12345n },
       create: { telegram_id: 12345n, username: 'alice' },
@@ -80,71 +182,11 @@ describe('DeploysService', () => {
     });
   });
 
-  it('stores only encrypted secrets — never the plaintext token or key', async () => {
-    await service.create(USER, DTO);
-
-    const data = prisma.deploy.create.mock.calls[0][0].data;
-    // Persisted columns are ciphertext that round-trips back to the plaintext.
-    expect(secrets.decrypt(data.bot_token_enc)).toBe('123456:abc');
-    expect(secrets.decrypt(data.llm_key_enc)).toBe('sk-secret');
-    expect(data.bot_username).toBe('mybot');
-    expect(data.user_id).toBe(12345n);
-    // No plaintext leaks into the persisted row (real ciphertext, so a true check).
-    const serialized = JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
-    expect(serialized).not.toContain('sk-secret');
-    expect(serialized).not.toContain('123456:abc');
-    // No accidental plaintext columns.
-    expect(data).not.toHaveProperty('bot_token');
-    expect(data).not.toHaveProperty('llm_key');
-  });
-
-  it('enqueues only the deploy id — no secrets in the job payload', async () => {
-    await service.create(USER, DTO);
-    expect(queue.enqueueDeploy).toHaveBeenCalledWith({ deployId: 'deploy-1' });
-  });
-
-  it('persists the custom provider base_url and model', async () => {
-    const customDto: CreateDeployDto = {
-      bot_token: '123456:abc',
-      llm_provider: 'custom',
-      llm_key: 'sk-secret',
-      llm_base_url: 'https://llm.example.com/v1',
-      llm_model: 'my-model',
-    };
-    await service.create(USER, customDto);
-    const data = prisma.deploy.create.mock.calls[0][0].data;
-    expect(data.llm_base_url).toBe('https://llm.example.com/v1');
-    expect(data.llm_model).toBe('my-model');
-  });
-
-  it('defaults base_url/model to null for catalog providers', async () => {
-    await service.create(USER, DTO);
-    const data = prisma.deploy.create.mock.calls[0][0].data;
-    expect(data.llm_base_url).toBeNull();
-    expect(data.llm_model).toBeNull();
-  });
-
-  it('does not create a deploy or enqueue when the bot token is invalid (422)', async () => {
-    validateBotToken.validate.mockRejectedValue(new UnprocessableEntityException());
-
-    await expect(service.create(USER, DTO)).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(prisma.deploy.create).not.toHaveBeenCalled();
-    expect(queue.enqueueDeploy).not.toHaveBeenCalled();
-  });
-
-  it('propagates a 409 when the bot is already used by an active deploy', async () => {
-    validateBotToken.validate.mockRejectedValue(new ConflictException());
-
-    await expect(service.create(USER, DTO)).rejects.toBeInstanceOf(ConflictException);
-    expect(prisma.deploy.create).not.toHaveBeenCalled();
-    expect(queue.enqueueDeploy).not.toHaveBeenCalled();
-  });
-
   const dbRow = {
     id: 'deploy-1',
     agent: 'hermes',
     bot_username: 'mybot',
-    llm_provider: 'groq',
+    llm_provider: 'openrouter',
     status: 'ready',
     vm_ip: '1.2.3.4',
     hostinger_vm_id: '777',
@@ -152,9 +194,9 @@ describe('DeploysService', () => {
     llm_model: null,
     created_at: new Date('2026-07-04T10:00:00Z'),
     updated_at: new Date('2026-07-04T10:05:00Z'),
-    // Secret columns that must NOT appear in the view:
     bot_token_enc: 'v1:secret',
     llm_key_enc: 'v1:secret',
+    bot_token_status: null,
     user_id: 12345n,
   };
 
@@ -172,14 +214,14 @@ describe('DeploysService', () => {
         id: 'deploy-1',
         agent: 'hermes',
         bot_username: 'mybot',
-        llm_provider: 'groq',
+        llm_provider: 'openrouter',
         status: 'ready',
         vm_ip: '1.2.3.4',
+        bot_token_status: null,
         created_at: '2026-07-04T10:00:00.000Z',
         updated_at: '2026-07-04T10:05:00.000Z',
       },
     ]);
-    // No secret keys leak into the view.
     const serialized = JSON.stringify(views);
     expect(serialized).not.toContain('bot_token_enc');
     expect(serialized).not.toContain('secret');
@@ -250,8 +292,7 @@ describe('DeploysService', () => {
   });
 
   describe('updateLlmKey', () => {
-    const KEY_DTO = { provider_id: 'groq', api_key: 'sk-new' };
-    // A ready deploy row with a genuinely-encrypted bot token so the re-render decrypts.
+    const KEY_DTO = { provider_id: 'openrouter', api_key: 'sk-new' };
     function readyRow() {
       return { ...dbRow, bot_token_enc: secrets.encrypt('123456:botsecret') };
     }
@@ -265,7 +306,7 @@ describe('DeploysService', () => {
       expect(validateLlmKey.validate).toHaveBeenCalledWith(KEY_DTO);
 
       const updateData = prisma.deploy.update.mock.calls[0][0].data;
-      expect(updateData.llm_provider).toBe('groq');
+      expect(updateData.llm_provider).toBe('openrouter');
       expect(secrets.decrypt(updateData.llm_key_enc)).toBe('sk-new');
 
       expect(provisioning.updateDockerProject).toHaveBeenCalledTimes(1);
@@ -273,8 +314,7 @@ describe('DeploysService', () => {
       expect(vmId).toBe(777);
       expect(projectName).toBe('hermes-deploy-1');
       expect(compose).toContain('nousresearch/hermes-agent');
-      expect(env).toContain('GROQ_API_KEY=sk-new');
-      // The plaintext key never reaches a provisioning log message.
+      expect(env).toContain('OPENROUTER_API_KEY=sk-new');
       const logMessage = prisma.provisioningLog.create.mock.calls[0][0].data.message;
       expect(logMessage).not.toContain('sk-new');
     });
@@ -304,6 +344,76 @@ describe('DeploysService', () => {
         ConflictException,
       );
       expect(validateLlmKey.validate).not.toHaveBeenCalled();
+      expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateBotToken', () => {
+    function readyRow() {
+      return {
+        ...dbRow,
+        bot_token_enc: secrets.encrypt('123456:oldtoken'),
+        llm_key_enc: secrets.encrypt('sk-or-existing'),
+      };
+    }
+
+    it('validates the new token (excluding self), re-encrypts it, re-pushes the project', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(readyRow());
+      validateBotToken.validate.mockResolvedValue({ username: 'newbot', id: 8 });
+
+      const result = await service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' });
+
+      expect(result).toEqual({ ok: true });
+      expect(validateBotToken.validate).toHaveBeenCalledWith('123456:newtoken', 'deploy-1');
+
+      const updateData = prisma.deploy.update.mock.calls[0][0].data;
+      expect(secrets.decrypt(updateData.bot_token_enc)).toBe('123456:newtoken');
+      expect(updateData.bot_username).toBe('newbot');
+      expect(updateData.bot_token_status).toBe('valid');
+
+      const [vmId, projectName, compose, env] = provisioning.updateDockerProject.mock.calls[0];
+      expect(vmId).toBe(777);
+      expect(projectName).toBe('hermes-deploy-1');
+      expect(env).toContain('TELEGRAM_BOT_TOKEN=123456:newtoken');
+      expect(env).toContain('OPENROUTER_API_KEY=sk-or-existing');
+      expect(compose).not.toContain('123456:newtoken');
+      const logMessage = prisma.provisioningLog.create.mock.calls[0][0].data.message;
+      expect(logMessage).not.toContain('123456:newtoken');
+    });
+
+    it('422s and does not touch the DB or VM when the new token is invalid', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(readyRow());
+      validateBotToken.validate.mockRejectedValue(new UnprocessableEntityException());
+
+      await expect(
+        service.updateBotToken(USER, 'deploy-1', { bot_token: 'bad' }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(prisma.deploy.update).not.toHaveBeenCalled();
+      expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
+    });
+
+    it('404s for a deploy owned by another user (no token probe)', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...readyRow(), user_id: 99999n });
+      await expect(
+        service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(validateBotToken.validate).not.toHaveBeenCalled();
+    });
+
+    it('409s when the deploy is not ready', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...readyRow(), status: 'configuring' });
+      await expect(
+        service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(validateBotToken.validate).not.toHaveBeenCalled();
+    });
+
+    it('409s when the deploy has no llm key to re-render', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...readyRow(), llm_key_enc: null });
+      validateBotToken.validate.mockResolvedValue({ username: 'newbot', id: 8 });
+      await expect(
+        service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' }),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
     });
   });

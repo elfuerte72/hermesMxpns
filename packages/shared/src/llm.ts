@@ -9,35 +9,11 @@ export interface LlmProvider {
 
 export const LLM_PROVIDERS: readonly LlmProvider[] = [
   {
-    id: 'groq',
-    name: 'Groq (бесплатно, без карты)',
-    base_url: 'https://api.groq.com/openai/v1',
-    key_env: 'GROQ_API_KEY',
-    default_model: 'llama-3.3-70b-versatile',
-    docs_url: 'https://console.groq.com/docs/api-keys',
-  },
-  {
-    id: 'proxyapi',
-    name: 'ProxyAPI (рубли, карта Мир)',
-    base_url: 'https://api.proxyapi.ru/openai/v1',
-    key_env: 'OPENAI_API_KEY',
-    default_model: 'gpt-4o-mini',
-    docs_url: 'https://proxyapi.ru/docs',
-  },
-  {
-    id: 'vsegpt',
-    name: 'VseGPT (рубли)',
-    base_url: 'https://api.vsegpt.ru/v1',
-    key_env: 'OPENAI_API_KEY',
-    default_model: 'openai/gpt-4o-mini',
-    docs_url: 'https://vsegpt.ru/Docs/API',
-  },
-  {
     id: 'openrouter',
-    name: 'OpenRouter (зарубежная карта/крипта)',
+    name: 'OpenRouter (managed)',
     base_url: 'https://openrouter.ai/api/v1',
     key_env: 'OPENROUTER_API_KEY',
-    default_model: '',
+    default_model: 'openai/gpt-4o-mini',
     docs_url: 'https://openrouter.ai/keys',
   },
   {
