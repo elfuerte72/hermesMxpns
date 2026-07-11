@@ -26,5 +26,6 @@ import { SubscriptionService } from './subscription.service';
       },
     },
   ],
+  exports: [SubscriptionService],
 })
 export class SubscriptionModule {}
