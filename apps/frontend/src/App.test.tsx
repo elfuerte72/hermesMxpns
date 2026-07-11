@@ -54,7 +54,6 @@ describe('App routing', () => {
     expect(container.textContent).toContain('HERMES');
     expect(container.textContent).toContain('Твой ИИ-агент в Telegram');
     expect(container.textContent).toContain('▶ Создать агента');
-    expect(container.textContent).toContain('₽/мес');
   });
 
   it('navigates menu → step 1 on «Создать агента»', () => {

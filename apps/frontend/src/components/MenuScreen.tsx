@@ -1,6 +1,5 @@
 import type { ReactElement } from 'react';
 import logo from '../assets/logo.png';
-import { formatPriceRub } from '../config';
 import { PixelButton } from './ui';
 
 interface MenuScreenProps {
@@ -33,11 +32,6 @@ export function MenuScreen({ onCreate, onAgents, onAbout }: MenuScreenProps): Re
           Мои агенты
         </PixelButton>
         <PixelButton onClick={onAbout}>Об агенте</PixelButton>
-        <p className="text-center text-[9px] leading-relaxed text-dim">
-          Свой сервер + агент — <b className="text-accent">от {formatPriceRub()}</b>
-          <br />
-          оплата после успешного запуска
-        </p>
       </div>
     </section>
   );
