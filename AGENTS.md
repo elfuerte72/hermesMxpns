@@ -1,82 +1,89 @@
 # AGENTS.md — Hermes Deployer
 
-Project root entry point. **Read this first**, then `docs/intent/hermes-deployer.md` → `docs/architecture/hermes-deployer.md` → `docs/plan/hermes-deployer.md`.
+One-click деплой Hermes-агента (Nous Research) для нетехнического клиента через Telegram Mini App: клиент платит подписку (Tribute, рубли) → бэкенд создаёт managed OpenRouter-ключ (spend-cap) и поднимает Hostinger VPS → Hermes стартует через Docker Manager API → бот отвечает в Telegram без SSH и без похода за API-ключом. Коммерческое, маржа ~30% поверх VPS+LLM.
 
-## What this is
+## Read first (in order)
 
-One-click деплой Hermes-агента (Nous Research) для нетехнического клиента через Telegram Mini App. Клиент вводит bot token + LLM-провайдер + LLM-ключ → бэкенд поднимает Hostinger VPS и пушит Hermes-проект через Docker Manager API → Hermes стартует без SSH → клиент получает бота в Telegram. Коммерческое, подписка, маржа ~30% поверх себестоимости VPS.
+1. this file
+2. `docs/intent/hermes-deployer.md` — подтверждённое намерение (what/why/success/constraints)
+3. `docs/architecture/hermes-deployer.md` — технический референс: Hostinger API, Hermes setup, LLM-провайдеры, модель данных, flow, безопасность. **Факты sourced — не переследовать, не угадывать; при пробеле спросить человека, не изобретать.**
+4. `docs/plan/hermes-deployer.md` — фазы/задачи и открытые чекпойнты (реализовывать строго по фазам, вертикальными срезами)
+5. `docs/deploy/dokploy.md` — прод на Dokploy
 
-## Doc map (read order)
+Свежий агент: прочитать доки по порядку → сверить статус ниже и открытые чекпойнты в `docs/plan` → факты брать из `docs/architecture`; если устарели — обновлять док, а не молча отклоняться. `CLAUDE.md` содержит supplementary детали (provisioning flow, bot webhook) — перекрывается с `docs/architecture`.
 
-1. `docs/intent/hermes-deployer.md` — подтверждённое намерение (what/why/success/constraints/out-of-scope)
-2. `docs/architecture/hermes-deployer.md` — технический референс: проверенные факты Hostinger API, Hermes setup, LLM-провайдеры, модель данных, API, flow, безопасность. **Все факты sourced — не переследовать, не угадывать.**
-3. `docs/plan/hermes-deployer.md` — фазы и задачи (Task 1 → Task 18, чекпойнты). Реализовывать строго по фазам, вертикальными срезами.
-4. `docs/deploy/dokploy.md` — прод-развёртывание (Dokploy: сервисы, домен, env, ограничения IP-проверки).
+## Stack & layout
 
-## Tech stack
+npm workspaces monorepo, три пакета (оба приложения импортируют `@hermes/shared`):
 
-- **Backend:** NestJS + TypeScript (Node 20+), Prisma, BullMQ, grammY, `hostinger-api-sdk` (`ssh2`-recovery не понадобился — Docker Manager API работает без SSH, в зависимостях его нет)
-- **Frontend (Mini App):** React 19 + Vite + TypeScript + Tailwind; вместо `@telegram-apps/sdk-react` — свой мост `telegram.ts` над `window.Telegram.WebApp` (см. arch §14/§17)
-- **Infra:** PostgreSQL, Redis (docker compose локально)
-- **Monorepo:** npm workspaces — `apps/backend`, `apps/frontend`, `packages/shared`
+- `packages/shared` — общие типы + чистые функции (`hostinger.ts`, `llm.ts`, `auth.ts`, `api.ts`, `deploy.ts`, `subscription.ts`, `openrouter.ts`, `topup.ts`). **Резолвится в свой `dist`** (`main`/`types` → `dist`), не в исходники.
+- `apps/backend` — NestJS 11 + Prisma 7 (driver adapter `@prisma/adapter-pg`) + BullMQ + grammY + `hostinger-api-sdk`. Entry `src/main.ts`. Модули: Auth, Bot, Secrets, Provisioning, LlmProviders, Deploys (+ Topup, bot-token DTO), Subscription, OpenRouterKeys, Workers (deploy/teardown/reconcile/stuck-deploy/token-healthcheck/subscription-expiry).
+- `apps/frontend` — React 19 + Vite 8 + Tailwind 4. **Мост к Telegram — свой `src/telegram.ts` над `window.Telegram.WebApp`; `@telegram-apps/sdk-react` в `package.json` — vestigial, нигде не импортируется, не использовать.** Экраны: Menu, About, BotTokenStep, PaymentStep (Tribute), DeployStatusView, AgentsList, AgentDetail (restart / смена LLM-ключа / смена bot-token / topup / удаление).
 
-## Commands (устанавливаются в Task 1; следовать этим паттернам)
+Infra: Postgres 16 + Redis 7 (`docker compose up -d`). Node ≥ 20.11. CI нет — прод-деплой через Dokploy autodeploy из `main`.
 
-- Build all: `npm run build`
-- Lint: `npm run lint`
-- Dev: `npm run dev` (поднимает backend + frontend)
-- Backend tests: `npm test -w apps/backend`
-- Prisma migrate: `npx prisma migrate dev` (из `apps/backend`)
-- Prisma generate: `npx prisma generate`
-- Local infra: `docker compose up -d` (Postgres + Redis)
-- Type check: `npx tsc --noEmit`
+## Commands (из корня, если не сказано иное)
+
+- `npm run build` — shared → backend → frontend (порядок важен, см. ниже)
+- `npm run dev` — собирает shared, затем concurrently shared-watch + backend (nest watch, :3000) + frontend (vite, :5173)
+- `npm run lint` (eslint .) · `npm run format` / `format:check` (prettier) · `npm run typecheck`
+- `npm test` — backend Jest + frontend vitest
+- **Один backend-тест:** `npm test -w apps/backend -- auth/tma-validation` (аргумент — Jest path-паттерн, не путь к файлу)
+- Frontend тесты: `npm test -w apps/frontend` (vitest run, jsdom)
+- Prisma — **запускать из `apps/backend`**: `npm run prisma:migrate` (migrate dev), `npm run prisma:generate`
+- Локальная инфра: `docker compose up -d`
+- Перед коммитом: `npm run lint && npm run build && npm test`
+
+## Gotchas (неочевидное, на чём споткнётся агент)
+
+- **Build ordering.** `@hermes/shared` резолвится в `dist`, поэтому shared собирается **до** backend/frontend — корневые `build`/`dev`/`typecheck` делают это первым шагом. После правок в `packages/shared` пересобрать (`npm run build:shared`), иначе потребители видят старые типы; в `dev` следит `dev:shared` (tsc --watch).
+- **НО backend-тесты мапят `@hermes/shared` на исходники** (`jest.config.js` `moduleNameMapper` → `packages/shared/src`). Тестам билд shared не нужен, а `build`/`typecheck`/runtime идут по `dist` — рассинхрон возможен.
+- **NestJS DI: модули должны EXPORT провайдеры, которые потребляют другие модули.** `SubscriptionService` объявлен в `SubscriptionModule`, но `DeploysModule` импортирует `SubscriptionModule` и инжектит `SubscriptionService` в `DeploysService` — если `SubscriptionModule` не `exports: [SubscriptionService]`, prod падает на boot (`UnknownDependenciesException`). Typecheck и unit-тесты (фейки, без DI-контейнера) этого **не ловят** — только runtime. Всегда проверяй `exports` в новом модуле, если его сервисы используются за пределами модуля.
+- **Env — два слоя, один корневой `.env`.** `apps/backend/src/env.ts` импортируется первой строкой `main.ts` и поднимает dotenv вверх по дереву (до 6 уровней) — единственный `.env` в корне монорепо виден backend'у из `apps/backend`. Тот же walk повторён в `prisma.config.ts`. `@nestjs/config` включён с `ignoreEnvFile: true` (файл уже загружен) + zod-валидация (`config/env.schema.ts`); `DRY_RUN` по умолчанию `true`. **Не создавать `apps/backend/.env`.**
+- **Prisma — нестандартно.** Клиент генерируется в `apps/backend/src/generated/prisma` (не в `node_modules`), папка в `.gitignore` — после любой правки `schema.prisma` обязательно `npm run prisma:generate`, иначе не компилится. `prisma generate` требует `DATABASE_URL` (даже без реального коннекта) — `prisma.config.ts` сам поднимает её из `.env`. Миграции в проде накатываются автоматически при старте контейнера (`prisma migrate deploy` в `Dockerfile` CMD).
+- **DI-конвенция.** Сервисы, зависящие от env/config, — обычные классы, принимающие **готовые значения в конструкторе**; модуль связывает через `useFactory` + `inject: [ConfigService]` (см. `SecretsModule`, `AuthModule`, `BotModule`, `ProvisioningModule`, `SubscriptionModule`, `OpenRouterKeysModule`, `TopupModule`). Не тянуть `ConfigService` внутрь сервисов — это держит их тестируемыми (в `*.spec.ts` инстанцируются с фейками напрямую).
+- **Секреты.** Только через `SecretsService` (AES-256-GCM, формат `v1:base64(iv‖tag‖ciphertext)`, ключ `ENCRYPTION_KEY` = 64 hex = 32 байта). В БД только шифр (`*_enc` колонки). Не логировать, не отдавать в API, не хранить plaintext.
+- **Frontend base path.** Vite `base: '/app/'` в prod (отдаётся бэкендом под `/app` через `SERVE_FRONTEND_DIR`), `/` в dev. Mini App — single-origin с бэкендом в проде.
+- **Dokploy MCP.** Прод-инфра управляется через Dokploy (`https://dokploy.mxpkn8ns.ru`). MCP-сервер `@dokploy/mcp` подключён в `~/.config/opencode/opencode.jsonc` с `DOKPLOY_REDACT_ENV=true` (секреты редактируются в ответах). Теги: `application,deployment,docker,compose,domain,settings,postgres,redis`. Читай логи через `application-readLogs`, триггери redeploy через `application-redeploy`, проверяй контейнеры через `docker-getServiceContainersByAppName`. Swarm: если контейнер падает с `No such image` — образ не собрался (нужен redeploy), если `non-zero exit (1)` — читай логи приложения (`application-readLogs`).
 
 ## Code conventions
 
-- TypeScript strict mode везде; named exports (no default exports)
-- NestJS: модульная структура (`src/<module>/{<module>.module.ts, *.service.ts, *.controller.ts, *.dto.ts}`)
-- DTOs с zod или class-validator; валидация на входе всех endpoints
-- Секреты — только через `SecretsModule` (AES-256-GCM), никогда не в логах, не в ответах API, не plaintext в БД
-- Колокация тестов: `*.spec.ts` рядом с исходником
-- Коммиты — только когда явно просят; сообщение — кратко, в стиле репо
-- Не добавлять комментарии в код, если не просят
+- TS strict; named exports (no default); валидация входа — zod через `common/zod-validation.pipe.ts` (ошибки → 400 с issues)
+- NestJS-модуль: `<module>/{*.module.ts, *.service.ts, *.controller.ts, *.dto.ts}`
+- Колокация тестов: backend `*.spec.ts` (Jest), frontend `*.test.ts(x)` (vitest) — рядом с исходником
+- Комментарии в коде — только если просят
 
 ## Boundaries (КРИТИЧНО)
 
-- **Никогда не коммитить `.env` и секреты.** `.gitignore` уже исключает `.env`.
-- **Hostinger API-токен лежит в `.env` (`HOSTINGER_API_TOKEN`).** Это живой токен оператора. Не логировать, не отправлять в репо, не хардкодить. Перед продом — ротировать.
-- **Не угадывать Hostinger API / Hermes setup** — всё сверено в `docs/architecture`. Если факт нужен и его там нет — спросить человека, не изобретать.
-- **Не менять тариф/регион/template** без подтверждения (KVM 1, Vilnius id=11, template 1121 — зафиксированы).
-- **`purchaseVM` списывает реальные деньги.** В dev использовать флаг `DRY_RUN=true` (мок Hostinger), реальные вызовы — только в чекпойнтах с явного одобрения. **В проде (Dokploy) с 2026-07-05 стоит `DRY_RUN=false`** — каждый деплой из Mini App покупает реальный VPS с карты оператора.
-- **Пуш в `main` автодеплоит прод** (Dokploy Autodeploy → `https://hermes.mxpkn8ns.ru`). Не пушить без зелёных lint/build/test.
-- **Прод-`ENCRYPTION_KEY` (задан в Dokploy, отличается от локального) не менять** — сломается расшифровка секретов в прод-БД.
-- Перед коммитом: `npm run lint && npm run build && npm test`.
+- **Не коммитить `.env` и секреты** (`.gitignore` исключает; shape — в `.env.example`).
+- **`HOSTINGER_API_TOKEN` (в `.env`) — живой токен оператора.** Не логировать, не в репо, не хардкодить. Перед продом — ротация.
+- **Не угадывать Hostinger API / Hermes setup** — всё сверено в `docs/architecture`; при пробеле спросить человека.
+- **Не менять тариф/регион/template без подтверждения** (KVM 1, Vilnius id=11, template 1121 — зафиксированы).
+- **`purchaseVM` списывает реальные деньги.** `DRY_RUN=true` (мок) в dev; реальные вызовы — только в чекпойнтах с явного одобрения. **В проде `DRY_RUN=false`** — каждый деплой из Mini App покупает реальный VPS с карты оператора.
+- **Пуш в `main` автодеплоит прод** (Dokploy → `https://hermes.mxpkn8ns.ru`). Не пушить без зелёных lint/build/test.
+- **Прод-`ENCRYPTION_KEY` (в Dokploy, ≠ локальный) не менять** — сломается расшифровка секретов в прод-БД.
 
-## Env (`.env`, gitignored; shape в `.env.example`)
+## Env
 
-```
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hermes_deployer
-REDIS_URL=redis://localhost:6379
-HOSTINGER_API_TOKEN=<в .env>           # оператора, не коммитить
-BOT_TOKEN=<твой Telegram-бот-токен>     # entry-бота, получить у @BotFather
-BOT_USE_WEBHOOK=false                   # false=long polling (dev), true=webhook (prod)
-TMA_AUTH_MAX_AGE_SECONDS=86400          # freshness-окно Telegram initData (24h)
-ENCRYPTION_KEY=<32-byte hex>            # для AES-GCM, сгенерировать
-BACKEND_URL=https://<публичный-домен>   # для Telegram-вебхука бота
-MINI_APP_URL=https://<домен-mini-app>
-DRY_RUN=true                            # мок Hostinger в dev
-# SERVE_FRONTEND_DIR=<путь к apps/frontend/dist>  # отдавать Mini App с бэкенда под /app (прод)
-```
+Полный shape — в `.env.example` (включая `DEPLOY_WORKER_ENABLED`, `RECONCILE_DELETE_ORPHANS`, `SUBSCRIPTION_CHANNEL_ID`, `OPENROUTER_MANAGEMENT_KEY`, `OPENROUTER_KEY_LIMIT_USD`, `OPENROUTER_KEY_LIMIT_RESET`, `OPENROUTER_TOPUP_MARKUP_PERCENT`, `TOPUP_TIERS`, `SUBSCRIPTION_GRACE_DAYS`). Критичные: `DATABASE_URL`, `REDIS_URL`, `HOSTINGER_API_TOKEN`, `BOT_TOKEN`, `BOT_USE_WEBHOOK` (false=dev polling, true=prod webhook), `ENCRYPTION_KEY` (64 hex), `DRY_RUN`, `BACKEND_URL`, `MINI_APP_URL`, `SERVE_FRONTEND_DIR`, `SUBSCRIPTION_CHANNEL_ID`, `OPENROUTER_MANAGEMENT_KEY`.
 
-Прод-значения env живут в Dokploy (hermes-backend → Environment), не в этом репо. `BACKEND_URL=https://hermes.mxpkn8ns.ru`, `MINI_APP_URL=https://hermes.mxpkn8ns.ru/app/`, `BOT_USE_WEBHOOK=true`.
-
-## How to start (для свежего агента)
-
-1. Прочитать доки выше (intent → architecture → plan → deploy).
-2. Сверить статус в `CLAUDE.md` и открытые чекпойнты в `docs/plan/hermes-deployer.md`.
-3. Использовать `incremental-implementation` и `test-driven-development` скиллы; каждая задача = вертикальный срез с acceptance criteria и verification.
-4. Все технические факты брать из `docs/architecture`; если устарели — обновлять док, а не молча отклоняться.
+Прод-значения живут в Dokploy (hermes-backend → Environment), не в репо: `BACKEND_URL=https://hermes.mxpkn8ns.ru`, `MINI_APP_URL=https://hermes.mxpkn8ns.ru/app/`, `BOT_USE_WEBHOOK=true`, `DRY_RUN=false`. **Phase 6 env (пока НЕ настроены в проде):** `SUBSCRIPTION_CHANNEL_ID` (id канала «Hermes»), `OPENROUTER_MANAGEMENT_KEY` (management-ключ из OpenRouter dashboard), `TOPUP_TIERS` (JSON массив тиров доплаты — опционально). Без `SUBSCRIPTION_CHANNEL_ID` + `OPENROUTER_MANAGEMENT_KEY` one-click деплой вернёт 402/401 — приложение стартует, но создание агента заблокировано.
 
 ## Status
 
-**MVP работает end-to-end в проде** (232 теста: 200 backend + 32 frontend). Чекпойнт реального деплоя пройден 2026-07-05 — живой клиент развернул агента из Telegram. Прод: `https://hermes.mxpkn8ns.ru` (Dokploy, Postgres+Redis как сервисы, приложение из корневого `Dockerfile`, Mini App под `/app/`, автодеплой из `main` через GitHub-webhook, **`DRY_RUN=false`**) — см. `docs/deploy/dokploy.md`. Реализовано за 2026-07-05 (arch §19–§21): Docker Manager-доставка секретов, каталог LLM v2 (оплата из РФ) + `validate-llm-key`, self-heal оплаченных VPS (устойчивость к 402-гонке), CPU-лимит 1.0, личный кабинет «Мои агенты» (restart / смена ключа / удаление), пиксельный UI. Открыто: Phase 6 (биллинг Telegram Stars).
+**Phase 6 реализована 2026-07-11** (Tasks 19–25, arch §23). One-click bundle + Tribute billing работают в проде (`https://hermes.mxpkn8ns.ru`). Реализовано:
+- Subscription module — Tribute channel-membership gating (`getChatMember` + `chat_member` update; `GET /subscription/status`, `POST /subscription/check`).
+- OpenRouterKeys module — Management API (`createKey`/`raiseLimit`/`setDisabled`/`deleteKey`/`getKey`).
+- DB migration — `openrouter_key_hash`, `subscription_channel_id/status/until`, `subscription_expired_at`, `bot_token_status`; `paid_until` удалён; `llm_key_enc` nullable (worker mintит managed key).
+- One-click deploy flow — `POST /deploys` без `llm_key`/`llm_provider` (бэкенд ставит openrouter + worker mintит ключ); каталог → только `openrouter` (+ `custom` по `?advanced=1`); frontend: bot-token → оплата (Tribute deep-link) → статус.
+- Topup — фиксированные Tribute tier-каналы (`POST /deploys/topup` с проверкой membership тир-канала → `raiseLimit`); кнопка «Пополнить токены» в кабинете.
+- Bot-token recovery — `PATCH /deploys/:id/bot-token` (re-push env, VPS не трогается); hourly `getMe` healthcheck cron; badge «токен невалиден» + кнопка @BotFather.
+- Subscription expiry — `chat_member left` → `disableKey`; renewal → `enableKey`; daily grace-teardown cron (`SUBSCRIPTION_GRACE_DAYS=7`).
+- Каталог LLM упрощён: `groq`/`proxyapi`/`vsegpt` удалены, `OPENAI_BASE_URL` рендер убран. Рендерер `hermes-config.ts` пишет только `OPENROUTER_API_KEY`.
+- UI: ценник убран из главного меню; экран «Об агенте» расширен (карточки возможностей, шаги, YouTube-обзоры).
+
+~308 тестов (275 backend Jest + 33 frontend vitest). Build/lint/typecheck зелёные. Пуш в `main` автодеплоит прод через Dokploy.
+
+**Прод-чекпойнт Phase 6:** код деплоен, приложение стартует. Не настроены env: `SUBSCRIPTION_CHANNEL_ID`, `OPENROUTER_MANAGEMENT_KEY`, `TOPUP_TIERS` — без них one-click создание агента заблокировано (402/401). Ручной прогон end-to-end (оплата → membership → деплой → агент отвечает) — pending настройки env оператором.
+
+**Открытые вопросы:** Tribute API (нет), реселлерские ToS Hostinger (не подтверждены), Managed Bots (Bot API 9.6 — отложено отдельной фазой).

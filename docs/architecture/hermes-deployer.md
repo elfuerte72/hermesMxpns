@@ -165,13 +165,13 @@ Hermes поддерживает несколько `custom_providers` однов
 
 **Source:** `/nousresearch/hermes-agent` (providers.md, user-guide/configuration). VseGPT проверен эмпирически (2026-07-05): OpenAI-compatible endpoint принимает `Authorization: Bearer` (невалидный Bearer → 403 «Incorrect API key», без хедера → «No API key provided»); tools/stream заявлены в доках (`Docs/API/AddFeatures`). ProxyAPI: Bearer подтверждён докой; заявлена полная совместимость с OpenAI-спецификацией («все методы и форматы идентичны оригинальным от OpenAI»). Все OpenAI-compatible.
 
-| id           | name                                  | base_url                          | key_env              | default_model             |
-| ------------ | ------------------------------------- | --------------------------------- | -------------------- | ------------------------- |
-| `groq`       | Groq (бесплатно, без карты)           | `https://api.groq.com/openai/v1`  | `GROQ_API_KEY`       | `llama-3.3-70b-versatile` |
-| `proxyapi`   | ProxyAPI (рубли, карта Мир)           | `https://api.proxyapi.ru/openai/v1` | `OPENAI_API_KEY`   | `gpt-4o-mini`             |
-| `vsegpt`     | VseGPT (рубли)                        | `https://api.vsegpt.ru/v1`        | `OPENAI_API_KEY`     | `openai/gpt-4o-mini`      |
-| `openrouter` | OpenRouter (зарубежная карта/крипта)  | `https://openrouter.ai/api/v1`    | `OPENROUTER_API_KEY` | (выбор клиента)           |
-| `custom`     | Свой (OpenAI-compatible)              | (ввод клиента)                    | `CUSTOM_API_KEY`     | (ввод клиента)            |
+| id           | name                                 | base_url                            | key_env              | default_model             |
+| ------------ | ------------------------------------ | ----------------------------------- | -------------------- | ------------------------- |
+| `groq`       | Groq (бесплатно, без карты)          | `https://api.groq.com/openai/v1`    | `GROQ_API_KEY`       | `llama-3.3-70b-versatile` |
+| `proxyapi`   | ProxyAPI (рубли, карта Мир)          | `https://api.proxyapi.ru/openai/v1` | `OPENAI_API_KEY`     | `gpt-4o-mini`             |
+| `vsegpt`     | VseGPT (рубли)                       | `https://api.vsegpt.ru/v1`          | `OPENAI_API_KEY`     | `openai/gpt-4o-mini`      |
+| `openrouter` | OpenRouter (зарубежная карта/крипта) | `https://openrouter.ai/api/v1`      | `OPENROUTER_API_KEY` | (выбор клиента)           |
+| `custom`     | Свой (OpenAI-compatible)             | (ввод клиента)                      | `CUSTOM_API_KEY`     | (ввод клиента)            |
 
 Mini App даёт меню выбора; бэкенд подставляет правильный `base_url` + `key_env` в `config.yaml`. Для провайдеров с `key_env=OPENAI_API_KEY` (proxyapi, vsegpt) в project-`.env` дополнительно рендерится `OPENAI_BASE_URL=<base_url>` — Hermes-механика custom OpenAI endpoint: «when `base_url` is set, Hermes ignores the provider and calls that endpoint directly» (user-guide/configuration).
 
@@ -382,6 +382,7 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - **Teardown-guard.** `deleteVM` не вызывается, если ту же `hostinger_vm_id` держит другой активный деплой (`count` по `ACTIVE_DEPLOY_STATUSES`, `id != current`) — иначе тирдаун проваленного деплоя, усыновившего живую машину, убил бы работающего агента.
 
 **Личный кабинет «Мои агенты»** (все эндпойнты `TmaAuthGuard` + owner-check `findOwnedDeployOrThrow` → 404):
+
 - `POST /deploys/:id/restart` → 202, `ready`-only (иначе 409 `not_ready`), `restartDockerProject`.
 - `PATCH /deploys/:id/llm-key` → 200, `ready`-only. Прогоняет `ValidateLlmKeyService` (те же chat/tools/stream пробы, 422/502 как в §20) → перешифровка → обновление `llm_provider/llm_base_url/llm_model/llm_key_enc` → re-render env+compose → `updateDockerProject`. Ключ не логируется. Не транзакционно между БД-update и VM-push (флаг на будущее).
 - `DELETE /deploys/:id` — переиспользован teardown (с guard выше).
@@ -400,3 +401,122 @@ POST /webhooks/deploy-ready         — от VPS после старта Hermes
 - **Не подтверждено:** выдаёт ли Portal статические API-ключи, работающие напрямую против `https://inference-api.nousresearch.com/v1` (страница `/api-docs` описывает «generate an API key → Bearer», доки агента говорят «no traditional API key»). Если да — Nous Portal встраивается в каталог v2 как обычный BYOK-провайдер (OpenAI-compatible base_url + Bearer, но **без** Tool Gateway). Проверка = живая подписка Plus ($20) + пробы `validate-llm-key`. Способы оплаты чекаута (не-US карты, крипта) не подтверждены — для РФ-аудитории, вероятно, тот же барьер, что OpenRouter.
 - **Опции продукта:** (A) добавить `nous` в каталог v2 как BYOK — после проверки статического ключа; (B) device-code-онбординг: деплой с `model.provider: nous` без auth, entrypoint запускает `hermes auth add nous --type oauth`, URL вытаскивается из логов контейнера (`getProjectLogsV1`) и отправляется клиенту кнопкой в Telegram — единственный путь, дающий и Tool Gateway; (C) бандл «VPS + подписка + маржа 40%» — только после письменного согласия Nous (реселлер-запрос; §10.2 явно допускает «written consent») и с ручной покупкой подписки на отдельный аккаунт под каждого клиента. Экономика C: Plus (19.49+20)×1.4 ≈ **$55/мес**; Super (19.49+100)×1.4 ≈ **$167**; Ultra (19.49+200)×1.4 ≈ **$307** (VPS по yearly $12.99/мес: $46 / $158 / $298).
 - Смежное: подписка даёт 10% скидку на token-billed провайдеров; `hermes proxy start` (порт 8645) раздаёт подписку внешним OpenAI-совместимым клиентам, но сам без авторизации — наружу не выставлять; x402 (Solana USDC per-request на inference API, без аккаунта) — только инференс, с наценкой, без Tool Gateway.
+
+## 23. Phase 6 — One-click bundle + Tribute billing (2026-07-08 специфицировано, 2026-07-11 реализовано)
+
+> Решение сессии 2026-07-08. Sourced; источники по каждому пункту. Меняет §7 (каталог), §8 (модель данных), §9 (API), §10 (flow), §21 (кабинет). Реализовано вертикальными срезами (Tasks 19–25, 2026-07-11).
+
+### 23.1 Продукт
+
+**One-click bundle — единственный advertised путь.** Юзер платит подписку → бэкенд создаёт managed OpenRouter-ключ (per-user, spend-cap) + разворачивает Hermes. LLM-ключ от оператора, не от клиента. Bot token юзер всё ещё создаёт сам в @BotFather (кнопка `/botfather` → `openTelegramLink('https://t.me/botfather')` из Mini App). BYOK (`custom` провайдер) остаётся в коде как скрытый «Advanced» для power-users, в основном UI не показывается.
+
+### 23.2 Платёжка — Tribute (открыто через лендинг/ToS/wiki)
+
+**Source:** tribute.tg (лендинг: Mir/Visa/Mastercard/Tether, комиссия 10%, выплаты 2×/мес на карту в рублях/евро, мин. 3000 ₽), `tribute.tg/terms.html` (ToS: §11 Creator↔Follower сделка, §22 цифровой контент 1€…1000€, §31 рекуррент — ежемесячное автосписание в дату первого платежа), `wiki.tribute.tg/ru/general/about-the-bot` (бот = админ канала, управление подписками/доступом).
+
+- **Tribute — бот-админ закрытого Telegram-канала**, не платёжный шлюз с API. Программного API выдачи подписок **нет** (в wiki не задокументировано; непроверенное — стучаться `@TributeCreatorBot` / `partnerships@top.team`). Интеграция — через **нативный Telegram API**, не через Tribute.
+- **Channel-membership gating (интеграционная модель):** оператор создаёт приватный канал «Hermes» → `@tribute` добавляется админом (управляет подписчиками по оплате) → entry-бот оператора добавляется админом (запрашивает membership). `getChatMember(channel, user_id)` / `chat_member` update (Bot API 6.5+) = единственный источник правды «подписан/нет». @tribute держит membership в синхроне с оплатой: заплатил → добавлен, не продлил → убран.
+- **Рубли/Mir на входе**, рекуррент автоматический (ToS §31), выплата оператору 10/25 числа на карту в рублях. Лимиты: подписка 100 ₽…300 000 ₽.
+- **Telegram Stars отклонён** (Source: `core.telegram.org/bots/payments-stars` — цифровые товары только в XTR, вывод только в TON через Fragment; `core.telegram.org/bots/features#payments` — «Telegram does not support the sale of digital goods and services using other currencies»). Причины: (1) двойная комиссия — сторы ~30% на входе (IAP) + Telegram назначает «monetary value per Star» при выводе < цены покупки; (2) вывод только в TON → хоп в fiat + спред + курс TON, никаких рублей напрямую; (3) для цели «рубли на карту, РФ, Mir» Stars существенно хуже плоских 10% Tribute. Единственное преимущество Stars — inline-оплата в Mini App (`sendInvoice` XTR), но паттерн «выйти в @bot» уже принят для @BotFather, выход в @tribute идентичен по трению.
+
+### 23.3 OpenRouter Management API (sourced — cap встроен апстримом, gateway не нужен)
+
+**Source:** Context7 `/websites/openrouter_ai` (репутация High). Endpoints под Management-key auth:
+
+| Метод                                          | Назначение                | Параметры                                                                                                                                                 |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/keys`                            | создать ключ              | `limit` (USD spend cap), `limit_reset: "monthly"\|"daily"\|"weekly"\|null` (reset в полночь UTC), `name`, `expires_at` (ISO UTC), `include_byok_in_limit` |
+| `PATCH /api/v1/keys/{hash}`                    | обновить                  | новый `limit`, `disabled`, `limit_reset`, `name`                                                                                                          |
+| `GET /api/v1/keys` / `GET /api/v1/keys/{hash}` | список / детали           | —                                                                                                                                                         |
+| `GET /api/v1/credits`                          | баланс аккаунта оператора | `total_credits`, `total_usage`                                                                                                                            |
+| `DELETE /api/v1/keys/{hash}`                   | удалить                   | —                                                                                                                                                         |
+
+- **Auth:** `OPENROUTER_MANAGEMENT_KEY` (env, секрет оператора, создаётся в OpenRouter dashboard — отдельный от обычных ключей).
+- **Plaintext `key` возвращается один раз** при `POST` → сразу шифруется в `llm_key_enc` (AES-256-GCM, `SecretsService`). `hash` хранится в БД (`openrouter_key_hash`) для последующих `PATCH`/`DELETE` — plaintext не персистится.
+- **Spend-cap встроен в ключ апстримом:** `limit: 40, limit_reset: "monthly"` → OpenRouter сам вернёт 402 при исчерпании. Твоя инфра не трогает LLM-трафик, не считает токены, не падает под нагрузкой. `limit` = per-key cap в USD (не аккаунт-wide). При низком балансе аккаунта / приближении к limit — повышенная latency (docs: «additional database checks when credit balance low»).
+- **Доплата:** `PATCH /api/v1/keys/{hash}` с новым `limit` (старый + N). Не нужно пересоздавать ключ → Hermes не требует re-push env (ключ тот же, лимит вырос на стороне OpenRouter).
+
+### 23.4 Каталог LLM (упрощение)
+
+`packages/shared/src/llm.ts` — удалить `groq`, `proxyapi`, `vsegpt`. Остаётся:
+
+- `openrouter` (managed): `base_url: https://openrouter.ai/api/v1`, `key_env: OPENROUTER_API_KEY`, default_model — оператор задаёт дефолт (напр. `anthropic/claude-3.5-sonnet` или `openai/gpt-4o-mini`); юзер может сменить модель в чате с агентом (OpenRouter 300+ моделей под одним ключом).
+- `custom` (BYOK, скрытый): остаётся в коде, не показывается в основном UI `ProviderStep.tsx` (экран выпиливается из главного флоу — провайдер не выбирается).
+
+Рендерер `hermes-config.ts`: `OPENAI_BASE_URL` больше не нужен (убирается кейс `key_env===OPENAI_API_KEY`). Hermes получает `OPENROUTER_API_KEY` + `config.yaml` с `custom_providers: [{name: openrouter, base_url, key_env: OPENROUTER_API_KEY}]`, `model.default`, `model.provider: custom:openrouter`.
+
+### 23.5 Экономика (sourced — §4 VPS цены + Tribute 10%)
+
+Себестоимость/мес (VPS monthly): KVM 1 $19.49 + OpenRouter limit $40 = **$59.49**. Прайс юзера = (себестоимость + маржа) ÷ 0.9 (Tribute 10%).
+
+| Маржа | Чистыми оператору | Прайс юзера                      |
+| ----- | ----------------- | -------------------------------- |
+| +30%  | $18.05/мес        | $85.93 → фикс. **7900 ₽** (~$86) |
+| +50%  | $30.03/мес        | $99.15 (~8900 ₽)                 |
+
+Доплата при исчерпании cap (+25% наценка, >10% Tribute): $10 токенов → юзер платит $12.50 → чистыми $1.25; $50 → $62.50 → чистыми $6.25. При наценке ≤10% оператор в нулевой/убыточной марже (Tribute съедает 10%).
+
+**Оборотный капитал:** OpenRouter не принимает Mir → оператор пополняет депозит foreign card/криптой, рубли от Tribute приходят 2×/мес. Нужен буфер на OpenRouter ≈ $40 × N одновременных клиентов на 1–2 месяца вперёд. Это вложение, не расход.
+
+### 23.6 Модель данных (изменения к §8)
+
+`Deploy` — новые колонки (реализовано, миграции `20260708*`):
+
+- `openrouter_key_hash String?` — hash ключа для `PATCH`/`DELETE` (plaintext не хранится, только шифр `llm_key_enc`).
+- `subscription_channel_id BigInt?` — id канала «Hermes» (для `getChatMember`).
+- `subscription_status String?` — `active` | `expired` | `none` (для gating без live-запроса).
+- `subscription_until DateTime?` — кэш даты истечения из Tribute (best-effort, источник правды — membership).
+- `subscription_expired_at DateTime?` — когда subscription_status стал `expired`; drives the grace-teardown cron.
+- `bot_token_status String?` — `valid` | `invalid` | null; health токена, независимый от VM `DeployStatus` (§23.8).
+- `paid_until` (vestigial — нигде не читается/не пишется) — **дропнут** миграцией.
+- `llm_key_enc` → **nullable** (worker mintит managed key после VM up; BYOK-деплои шифруют ключ при создании).
+
+`User` — без изменений (billing внешний, в Tribute). Новых таблиц нет (subscription = membership канала, не строка в БД).
+
+### 23.7 API (изменения к §9, реализовано)
+
+- `GET /subscription/status` (auth) — `subscription_status`, `subscription_until` (из кэша).
+- `POST /subscription/check` (auth) — форс-чек `getChatMember(channel, user_id)` → обновить `subscription_status` + `subscription_expired_at` (после оплаты в @tribute, когда юзер вернулся в Mini App).
+- `POST /deploys/topup` (auth) — `{ deploy_id, amount_usd }` → проверка membership фиксированного tier-канала → `PATCH /api/v1/keys/{hash}` поднять `limit`.
+- `GET /deploys/topup/tiers` (auth) — список тиров доплаты (`amount_usd`, `price_usd` с markup, `subscribe_url`).
+- `PATCH /deploys/:id/bot-token` (auth, owner) — смена bot-token без пересоздания VPS (см. 23.8).
+- `GET /llm-providers` — отдаёт только `openrouter` (+ `custom` скрыто по флагу `?advanced=1`).
+- `POST /deploys` — принимает только `{ bot_token }` (one-click); BYOK: `{ bot_token, llm_provider, llm_key, ... }` (hidden Advanced). Subscription gate: 402 если `subscription_status ≠ active` (когда `SUBSCRIPTION_CHANNEL_ID` настроен).
+
+### 23.8 Bot-token recovery (sourced — кодовая база)
+
+**Source:** код (explore 2026-07-08): `bot_token_enc` пишется 1× в `deploys.service.ts:53` (`create`), читается в `:146` (только для re-push при смене LLM-ключа) и `deploy.processor.ts:141`. Endpoint `PATCH /deploys/:id/bot-token` **отсутствует**. `reconcile.service.ts`/`stuck-deploy.service.ts` смотрят только Hostinger VM — мёртвый токен = статус `ready` навсегда.
+
+- **`PATCH /deploys/:id/bot-token`** — образец `updateLlmKey` (`deploys.service.ts:112-170`): `validateBotToken.validate` (getMe + `assertNotInUse` → 409) → перешифровать `bot_token_enc` → re-render env (`hermes-config.ts:50` подставляет новый `botToken`) + compose → `provisioning.updateDockerProject` (тот же re-push через `createNewProjectV1`, `provisioning.service.ts:144-155`). **VPS не трогается, деньги не списываются, контейнер рестартит с новым токеном.**
+- **Healthcheck bot-token:** новый @Cron (период., напр. раз в час) — `getMe` по сохранённым токенам активных деплоев → 401/невалид → `status` помечается `token_invalid` (новое значение или отдельное поле), кабинет показывает красный бейдж + кнопку «сменить токен». Не путать с `DeployStatus` (это health токена, не VM).
+- **UX:** в кабинете предупреждение «если удалил бота в @BotFather — создай нового и вставь новый токен здесь, VPS и ключи сохранятся». Кнопка `/botfather` → `openTelegramLink`.
+- **Managed Bots (Bot API 9.6, апрель 2026) — отложено.** `getManagedBotToken`/`replaceManagedBotToken`/deep-link `t.me/newbot/{manager}/...` решают и онбординг, и recovery программно (entry-бот как manager создаёт бота под капотом, токен ротируется одной кнопкой без @BotFather). Не в Phase 6 — требует включения _Bot Management Mode_ в BotFather MiniApp + handler `managed_bot` update. Отдельная фаза после Phase 6.
+
+### 23.9 Flow (one-click bundle, обновление §10)
+
+1. Mini App: «Создать агента» → `/botfather` (создать бота) → вставить token → **экран оплаты** (кнопка → `@tribute`, подписка 7900 ₽/мес).
+2. Юзер оплатил в @tribute → добавлен в канал «Hermes» → вернулся в Mini App → `POST /subscription/check` → `getChatMember` → `subscription_status=active`.
+3. Бэкенд: `POST /api/v1/keys` (limit 40, monthly) → шифр в `llm_key_enc`, hash в `openrouter_key_hash` → `POST /deploys` (только bot_token + provider=openrouter; LLM-ключ не от юзера) → BullMQ-job.
+4. Worker §19: `acquireVm` → `running` → расшифровать ключ → `createDockerProject` (`OPENROUTER_API_KEY` + config.yaml) → поллинг → `ready`.
+5. Cap исчерпан (Hermes логирует 402 от OpenRouter): кабинет «пополнить» → `POST /deploys/topup` → Tribute-оплата +25% → `PATCH /api/v1/keys/{hash}` (limit += N). Re-push env **не нужен** (ключ тот же, лимит вырос на стороне OpenRouter).
+6. Подписка истекла (Tribute убрал из канала): `chat_member` update (entry-бот подписан на updates канала) → `subscription_status=expired` → `PATCH /api/v1/keys/{hash}` `disabled: true` (агент заморожен, VPS не трогать до продления/teardown).
+7. Bot-token невалиден: healthcheck → `token_invalid` → кабинет → `PATCH /deploys/:id/bot-token` → re-push.
+
+### 23.10 Безопасность / ограничения
+
+- `OPENROUTER_MANAGEMENT_KEY` — секрет оператора, только в `.env`/Dokploy env, не в репо, не логировать. Даёт полный контроль над всеми ключами аккаунта — ротация при компрометации.
+- Per-user ключи изолированы: юзер видит только свой `OPENROUTER_API_KEY` (в контейнере), не мастер-ключ. Утечка per-user ключа = расход до его $40 cap, не аккаунт-wide.
+- Tribute не передаёт оператору платежные данные юзера (ToS: Tribute = payment agent, сделки Creator↔Follower). Оператор видит только membership канала.
+- `chat_member` update требует, чтобы entry-бот был админом канала «Hermes» (для `getChatMember` на приватном канале нужен member/admin).
+
+### 23.11 Implementation findings (2026-07-11)
+
+- **Topup verification gap (resolved).** Tribute не имеет API для разовых платежей — membership канала покрывает только recurring subscription. Решение: оператор создаёт **фиксированные tier-каналы** (напр. «Hermes+10», «Hermes+50») по одному на каждый tier доплаты. `POST /deploys/topup` проверяет membership тир-канала перед `raiseLimit`. Переиспользует gating-паттерн, полностью автоматизировано, без абьюза. Env `TOPUP_TIERS` = JSON `[{amount_usd, channel_id, subscribe_url}]`.
+- **DI export bug.** `SubscriptionModule` не экспортировал `SubscriptionService` → prod падал на boot (`UnknownDependenciesException`). Typecheck и unit-тесты (фейки, без DI-контейнера) этого **не ловят** — только runtime. Фикс: `exports: [SubscriptionService]`. AGENTS.md gotcha обновлён.
+- **Worker key resolution.** `DeployProcessor.resolveLlmKey`: (1) reuse `openrouter_key_hash` + `llm_key_enc` (retry after partial failure); (2) use BYOK `llm_key_enc` (custom provider); (3) mint new managed key via `openRouterKeys.createKey` → persist hash + шифр. Minting не ретраится (не идемпотентно, как `purchaseVM`). На fail — `deleteKey` (minted, не purchased).
+- **Teardown cleanup.** `TeardownProcessor` теперь удаляет и VM, и managed OpenRouter key (`deleteKey`). VM guard (shared active deploy) сохранён; key — per-deploy, всегда удаляется.
+- **Bot-token healthcheck.** `TokenHealthcheckService` (@Cron hourly) — `getMe` по токенам ready-деплоев → `bot_token_status: 'valid' | 'invalid'`. `ValidateBotTokenService.isTokenValid` (boolean, без uniqueness check) + `validate(token, excludeDeployId)` (excludes self для recovery).
+- **Subscription expiry.** `chat_member` handler в `BotService` syncs OpenRouter keys: `expired` → `setDisabled(true)`, `active` → `setDisabled(false)`. `SubscriptionExpiryService` (@Cron daily 04:00) — deploys с `subscription_status=expired` старше `SUBSCRIPTION_GRACE_DAYS` → teardown queue.
+- **Каталог LLM v3.** `groq`/`proxyapi`/`vsegpt` удалены из `LLM_PROVIDERS`. `OPENAI_BASE_URL` рендер убран из `hermes-config.ts` (больше не нужен — только `OPENROUTER_API_KEY`). `openrouter` default_model = `openai/gpt-4o-mini`. `LlmProvidersService.list(advanced)` — `openrouter` только; `+ custom` по `advanced=true`.
+- **Frontend.** `ProviderStep.tsx` заменён на `PaymentStep.tsx` (Tribute deep-link + `checkSubscription` → `createDeploy`). `AgentDetailScreen` расширен: `TopupBlock` (выбор тира → @tribute → raiseLimit), `BotTokenBlock` (смена токена + @BotFather), badge «токен невалиден». Меню: ценник убран. About: карточки возможностей, шаги, YouTube-обзоры.
+- **~308 тестов** (275 backend Jest + 33 frontend vitest). Build/lint/typecheck зелёные.

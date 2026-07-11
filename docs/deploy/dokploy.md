@@ -25,11 +25,19 @@
    ENCRYPTION_KEY=<openssl rand -hex 32; НЕ менять после первых записей — расшифровка сломается>
    BACKEND_URL=https://<домен>
    MINI_APP_URL=https://<домен>/app/
-   DRY_RUN=true
+   DRY_RUN=false
    TMA_AUTH_MAX_AGE_SECONDS=86400
+   # Phase 6 — one-click bundle (без них создание агента заблокировано: 402/401)
+   SUBSCRIPTION_CHANNEL_ID=<id закрытого канала «Hermes»; entry-бот — админ>
+   OPENROUTER_MANAGEMENT_KEY=<management-ключ из OpenRouter dashboard>
+   OPENROUTER_KEY_LIMIT_USD=40
+   OPENROUTER_KEY_LIMIT_RESET=monthly
+   OPENROUTER_TOPUP_MARKUP_PERCENT=25
+   SUBSCRIPTION_GRACE_DAYS=7
+   # TOPUP_TIERS=[{"amount_usd":10,"channel_id":"-100...","subscribe_url":"https://t.me/tribute/..."}]
    ```
 
-   `DRY_RUN=false` — только на чекпойнте реального деплоя, с явного одобрения (тратит реальные деньги).
+   `DRY_RUN=false` — каждый деплой из Mini App покупает реальный VPS с карты оператора.
 
 5. **Deploy** и проверить:
    - `GET https://<домен>/health` → `{"status":"ok"}`;
@@ -46,3 +54,5 @@
 - Смена схемы БД: миграции накатываются при рестарте контейнера (`migrate deploy`), отдельного шага не нужно.
 - Ручные SQL по прод-БД — через Dokploy: сервис `hermes-postgres` → **Open Terminal** → `psql -U postgres -d hermes_deployer -c "…"`. Внешний `:5432` на хосте — это Postgres самого Dokploy, не наш (снаружи к `hermes_deployer` не подключиться). Удаление строк `deploys` **не трогает VPS** (в отличие от teardown) — безопасно для чистки мусорных/проваленных записей.
 - MCP `hostinger-api` (обёртка над Hostinger API) подключён в Claude Code (`claude mcp add hostinger-api`). Для диагностики контейнера Hermes на клиентском VPS (когда `docker compose up` «успех», но 0 контейнеров) — браузер-терминал VPS в hPanel: `docker ps -a`, `cd /docker/<project> && docker compose up -d` покажет реальную ошибку (API docker-logs отдаёт «project not found» при 0 контейнеров).
+- **Dokploy MCP** (`@dokploy/mcp`) подключён в opencode (`~/.config/opencode/opencode.jsonc`, `DOKPLOY_REDACT_ENV=true`). Теги: `application,deployment,docker,compose,domain,settings,postgres,redis`. Читай логи через `application-readLogs`, триггери redeploy через `application-redeploy`, проверяй контейнеры через `docker-getServiceContainersByAppName`. Application ID `hermes-backend`: `H46WvqhnW3Tg4qlgCz5yi`.
+- **Phase 6 Tribute setup** (оператор, вручную): (1) создать приватный Telegram-канал «Hermes»; (2) добавить `@tribute` админом (управляет подписками); (3) добавить entry-бота админом (для `getChatMember` + `chat_member` updates); (4) создать tier-каналы для доплат (напр. «Hermes+10», «Hermes+50»), тоже с `@tribute` админом; (5) вписать `SUBSCRIPTION_CHANNEL_ID` + `TOPUP_TIERS` в Dokploy env.
