@@ -1,4 +1,9 @@
-import type { DeployStatus } from '@hermes/shared';
+import type {
+  DeployStatus,
+  HostingerDockerContainerHealth,
+  HostingerDockerContainerState,
+  HostingerVmState,
+} from '@hermes/shared';
 
 export const STATUS_LABELS: Record<DeployStatus, string> = {
   pending: 'В очереди…',
@@ -33,3 +38,70 @@ export function statusProgress(status: DeployStatus): number {
   if (index < 0) return 0;
   return Math.round((index / (PROGRESS_ORDER.length - 1)) * 100);
 }
+
+/** Live VM state (Hostinger) — shown on the agent detail screen. */
+export const VM_STATE_LABELS: Record<HostingerVmState, string> = {
+  running: 'Работает',
+  starting: 'Запускается…',
+  stopping: 'Останавливается…',
+  stopped: 'Остановлен',
+  creating: 'Создаётся…',
+  initial: 'Готовится…',
+  error: 'Ошибка',
+  suspending: 'Приостанавливается…',
+  unsuspending: 'Возобновляется…',
+  suspended: 'Приостановлен',
+  destroying: 'Удаляется…',
+  destroyed: 'Удалён',
+  recreating: 'Пересоздаётся…',
+  restoring: 'Восстанавливается…',
+  recovery: 'Восстановление…',
+  stopping_recovery: 'Остановка восстановления…',
+};
+
+export const VM_STATE_CLASS: Record<HostingerVmState, string> = {
+  running: 'text-ok',
+  starting: 'text-accent',
+  stopping: 'text-accent',
+  stopped: 'text-dim',
+  creating: 'text-accent',
+  initial: 'text-accent',
+  error: 'text-alarm',
+  suspending: 'text-accent',
+  unsuspending: 'text-accent',
+  suspended: 'text-dim',
+  destroying: 'text-accent',
+  destroyed: 'text-dim',
+  recreating: 'text-accent',
+  restoring: 'text-accent',
+  recovery: 'text-accent',
+  stopping_recovery: 'text-accent',
+};
+
+/** Live container state (Docker Manager) of the Hermes project. */
+export const CONTAINER_STATE_LABELS: Record<HostingerDockerContainerState, string> = {
+  created: 'Создан',
+  running: 'Работает',
+  restarting: 'Перезапускается…',
+  exited: 'Остановлен',
+  paused: 'На паузе',
+  dead: 'Недоступен',
+  stopping: 'Останавливается…',
+};
+
+export const CONTAINER_STATE_CLASS: Record<HostingerDockerContainerState, string> = {
+  created: 'text-dim',
+  running: 'text-ok',
+  restarting: 'text-accent',
+  exited: 'text-dim',
+  paused: 'text-dim',
+  dead: 'text-alarm',
+  stopping: 'text-accent',
+};
+
+export const CONTAINER_HEALTH_CLASS: Record<HostingerDockerContainerHealth, string> = {
+  starting: 'text-accent',
+  healthy: 'text-ok',
+  unhealthy: 'text-alarm',
+  '': 'text-dim',
+};

@@ -5,6 +5,7 @@ import {
   createDeploy,
   deleteDeploy,
   fetchProviders,
+  getAgentLiveStatus,
   getDeploy,
   listDeploys,
   restartDeploy,
@@ -59,7 +60,12 @@ describe('api client', () => {
     const fetchFn = mockFetch({
       ok: true,
       status: 200,
-      body: { ok: true, model: 'openai/gpt-4o-mini', supports_tools: true, supports_streaming: true },
+      body: {
+        ok: true,
+        model: 'openai/gpt-4o-mini',
+        supports_tools: true,
+        supports_streaming: true,
+      },
     });
     const res = await validateLlmKey({ provider_id: 'openrouter', api_key: 'sk-x' });
 
@@ -78,7 +84,9 @@ describe('api client', () => {
 
   it('validateLlmKey errors carry the machine-readable code', async () => {
     mockFetch({ ok: false, status: 422, body: { ok: false, code: 'invalid_key' } });
-    await expect(validateLlmKey({ provider_id: 'openrouter', api_key: 'bad' })).rejects.toMatchObject({
+    await expect(
+      validateLlmKey({ provider_id: 'openrouter', api_key: 'bad' }),
+    ).rejects.toMatchObject({
       name: 'ApiError',
       status: 422,
       code: 'invalid_key',
@@ -91,13 +99,19 @@ describe('api client', () => {
       status: 422,
       body: { ok: false, code: 'provider_incompatible', missing: ['tools'] },
     });
-    await expect(validateLlmKey({ provider_id: 'openrouter', api_key: 'sk-x' })).rejects.toMatchObject({
+    await expect(
+      validateLlmKey({ provider_id: 'openrouter', api_key: 'sk-x' }),
+    ).rejects.toMatchObject({
       code: 'provider_incompatible',
     });
   });
 
   it('createDeploy POSTs /deploys with auth', async () => {
-    const fetchFn = mockFetch({ ok: true, status: 202, body: { deploy_id: 'd1', status: 'pending' } });
+    const fetchFn = mockFetch({
+      ok: true,
+      status: 202,
+      body: { deploy_id: 'd1', status: 'pending' },
+    });
     const res = await createDeploy({ bot_token: '1:a' });
 
     expect(res).toEqual({ deploy_id: 'd1', status: 'pending' });
@@ -149,6 +163,23 @@ describe('api client', () => {
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe('/deploys/d1/restart');
     expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('tma INIT');
+  });
+
+  it('getAgentLiveStatus GETs /deploys/:id/live-status with auth', async () => {
+    const body = {
+      vm_state: 'running',
+      vm_ip: '1.2.3.4',
+      containers: [{ id: 'c1', name: 'h', image: 'i', status: 'Up', state: 'running', health: '' }],
+      checked_at: '2026-07-18T12:00:00.000Z',
+    };
+    const fetchFn = mockFetch({ ok: true, status: 200, body });
+    const res = await getAgentLiveStatus('d1');
+
+    expect(res).toEqual(body);
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('/deploys/d1/live-status');
+    expect(init.method).toBe('GET');
     expect(init.headers.Authorization).toBe('tma INIT');
   });
 

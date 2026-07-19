@@ -1,3 +1,5 @@
+import type { HostingerDockerContainer, HostingerVmState } from './hostinger';
+
 export type DeployStatus = 'pending' | 'creating' | 'configuring' | 'ready' | 'failed' | 'deleted';
 
 /** Statuses that occupy a bot username (block re-use by another deploy). */
@@ -72,4 +74,19 @@ export interface UpdateBotTokenRequest {
 /** Response of PATCH /deploys/:id/bot-token. */
 export interface UpdateBotTokenResponse {
   ok: true;
+}
+
+/**
+ * Live agent state on the VPS, fetched on demand from Hostinger
+ * (GET /deploys/:id/live-status). Tolerant snapshot: nulls/empties when the VM
+ * or project is not created yet or already gone — not errors.
+ */
+export interface AgentLiveStatus {
+  /** Hostinger VM state; null when the VM does not exist (yet or anymore). */
+  vm_state: HostingerVmState | null;
+  vm_ip: string | null;
+  /** Containers of the Hermes Docker project; empty while the project is not visible. */
+  containers: HostingerDockerContainer[];
+  /** ISO timestamp of when this snapshot was taken. */
+  checked_at: string;
 }

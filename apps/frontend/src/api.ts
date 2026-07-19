@@ -1,4 +1,5 @@
 import type {
+  AgentLiveStatus,
   CreateDeployRequest,
   CreateDeployResponse,
   DeployView,
@@ -115,6 +116,11 @@ export function restartDeploy(id: string): Promise<RestartResponse> {
   return request<RestartResponse>(`/deploys/${id}/restart`, { method: 'POST', auth: true });
 }
 
+/** Live agent state on the VPS — an on-demand Hostinger call, not a DB read. */
+export function getAgentLiveStatus(id: string): Promise<AgentLiveStatus> {
+  return request<AgentLiveStatus>(`/deploys/${id}/live-status`, { auth: true });
+}
+
 export function updateLlmKey(id: string, body: UpdateLlmKeyRequest): Promise<UpdateLlmKeyResponse> {
   return request<UpdateLlmKeyResponse>(`/deploys/${id}/llm-key`, {
     method: 'PATCH',
@@ -148,7 +154,10 @@ export function topupDeploy(deployId: string, amountUsd: number): Promise<TopupR
   });
 }
 
-export function updateBotToken(deployId: string, botToken: string): Promise<UpdateBotTokenResponse> {
+export function updateBotToken(
+  deployId: string,
+  botToken: string,
+): Promise<UpdateBotTokenResponse> {
   return request<UpdateBotTokenResponse>(`/deploys/${deployId}/bot-token`, {
     method: 'PATCH',
     body: { bot_token: botToken },

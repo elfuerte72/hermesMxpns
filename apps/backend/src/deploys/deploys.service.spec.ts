@@ -24,7 +24,12 @@ describe('DeploysService', () => {
   let validateBotToken: { validate: jest.Mock };
   let queue: { enqueueDeploy: jest.Mock };
   let teardownQueue: { enqueueTeardown: jest.Mock };
-  let provisioning: { restartDockerProject: jest.Mock; updateDockerProject: jest.Mock };
+  let provisioning: {
+    restartDockerProject: jest.Mock;
+    updateDockerProject: jest.Mock;
+    getVM: jest.Mock;
+    getDockerProjectContainers: jest.Mock;
+  };
   let validateLlmKey: { validate: jest.Mock };
   let subscription: { isGatingEnabled: jest.Mock; getLiveStatus: jest.Mock };
   let service: DeploysService;
@@ -61,6 +66,23 @@ describe('DeploysService', () => {
     provisioning = {
       restartDockerProject: jest.fn().mockResolvedValue(undefined),
       updateDockerProject: jest.fn().mockResolvedValue(undefined),
+      getVM: jest.fn().mockResolvedValue({
+        id: 777,
+        state: 'running',
+        ipv4: ['1.2.3.4'],
+      }),
+      getDockerProjectContainers: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 'c1',
+            name: 'hermes-hermes-1',
+            image: 'nousresearch/hermes-agent:latest',
+            status: 'Up 2 hours',
+            state: 'running',
+            health: 'healthy',
+          },
+        ]),
     };
     validateLlmKey = { validate: jest.fn().mockResolvedValue({ ok: true }) };
     subscription = {
@@ -90,7 +112,9 @@ describe('DeploysService', () => {
       await service.create(USER, ONE_CLICK);
       const data = prisma.deploy.create.mock.calls[0][0].data;
       expect(secrets.decrypt(data.bot_token_enc)).toBe('123456:abc');
-      const serialized = JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      const serialized = JSON.stringify(data, (_k, v) =>
+        typeof v === 'bigint' ? v.toString() : v,
+      );
       expect(serialized).not.toContain('123456:abc');
       expect(data).not.toHaveProperty('bot_token');
     });
@@ -122,22 +146,27 @@ describe('DeploysService', () => {
       expect(data.subscription_channel_id).toBe(CHANNEL_ID);
     });
 
-    it.each(['expired', 'none'] as const)('blocks creation with 402 when subscription is %s', async (status) => {
-      subscription.isGatingEnabled.mockReturnValue(true);
-      subscription.getLiveStatus.mockResolvedValue(status);
-      service = makeService(CHANNEL_ID);
+    it.each(['expired', 'none'] as const)(
+      'blocks creation with 402 when subscription is %s',
+      async (status) => {
+        subscription.isGatingEnabled.mockReturnValue(true);
+        subscription.getLiveStatus.mockResolvedValue(status);
+        service = makeService(CHANNEL_ID);
 
-      await expect(service.create(USER, ONE_CLICK)).rejects.toMatchObject({
-        status: 402,
-      });
-      expect(prisma.deploy.create).not.toHaveBeenCalled();
-      expect(queue.enqueueDeploy).not.toHaveBeenCalled();
-    });
+        await expect(service.create(USER, ONE_CLICK)).rejects.toMatchObject({
+          status: 402,
+        });
+        expect(prisma.deploy.create).not.toHaveBeenCalled();
+        expect(queue.enqueueDeploy).not.toHaveBeenCalled();
+      },
+    );
 
     it('does not create a deploy or enqueue when the bot token is invalid (422)', async () => {
       validateBotToken.validate.mockRejectedValue(new UnprocessableEntityException());
 
-      await expect(service.create(USER, ONE_CLICK)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      await expect(service.create(USER, ONE_CLICK)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
       expect(prisma.deploy.create).not.toHaveBeenCalled();
       expect(queue.enqueueDeploy).not.toHaveBeenCalled();
     });
@@ -168,7 +197,9 @@ describe('DeploysService', () => {
       expect(data.llm_base_url).toBe('https://llm.example.com/v1');
       expect(data.llm_model).toBe('my-model');
       expect(secrets.decrypt(data.llm_key_enc)).toBe('sk-secret');
-      const serialized = JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      const serialized = JSON.stringify(data, (_k, v) =>
+        typeof v === 'bigint' ? v.toString() : v,
+      );
       expect(serialized).not.toContain('sk-secret');
     });
   });
@@ -274,7 +305,11 @@ describe('DeploysService', () => {
       expect(result).toEqual({ ok: true });
       expect(provisioning.restartDockerProject).toHaveBeenCalledWith(777, 'hermes-deploy-1');
       expect(prisma.provisioningLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ deploy_id: 'deploy-1', step: 'restart', status: 'success' }),
+        data: expect.objectContaining({
+          deploy_id: 'deploy-1',
+          step: 'restart',
+          status: 'success',
+        }),
       });
     });
 
@@ -361,7 +396,9 @@ describe('DeploysService', () => {
       prisma.deploy.findUnique.mockResolvedValue(readyRow());
       validateBotToken.validate.mockResolvedValue({ username: 'newbot', id: 8 });
 
-      const result = await service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' });
+      const result = await service.updateBotToken(USER, 'deploy-1', {
+        bot_token: '123456:newtoken',
+      });
 
       expect(result).toEqual({ ok: true });
       expect(validateBotToken.validate).toHaveBeenCalledWith('123456:newtoken', 'deploy-1');
@@ -415,6 +452,81 @@ describe('DeploysService', () => {
         service.updateBotToken(USER, 'deploy-1', { bot_token: '123456:newtoken' }),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(provisioning.updateDockerProject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getLiveStatus', () => {
+    it('returns the live VM state and containers of an owned deploy', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(dbRow);
+
+      const result = await service.getLiveStatus(USER, 'deploy-1');
+
+      expect(provisioning.getVM).toHaveBeenCalledWith(777);
+      expect(provisioning.getDockerProjectContainers).toHaveBeenCalledWith(777, 'hermes-deploy-1');
+      expect(result).toEqual({
+        vm_state: 'running',
+        vm_ip: '1.2.3.4',
+        containers: [
+          expect.objectContaining({ name: 'hermes-hermes-1', state: 'running', health: 'healthy' }),
+        ],
+        checked_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      });
+    });
+
+    it('returns nulls without calling Hostinger when the VM is not created yet', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({
+        ...dbRow,
+        status: 'pending',
+        hostinger_vm_id: null,
+        vm_ip: null,
+      });
+
+      const result = await service.getLiveStatus(USER, 'deploy-1');
+
+      expect(result.vm_state).toBeNull();
+      expect(result.containers).toEqual([]);
+      expect(provisioning.getVM).not.toHaveBeenCalled();
+      expect(provisioning.getDockerProjectContainers).not.toHaveBeenCalled();
+    });
+
+    it('tolerates a vanished VM (Hostinger 404 → null state, containers still returned)', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(dbRow);
+      provisioning.getVM.mockRejectedValue({ response: { status: 404 } });
+
+      const result = await service.getLiveStatus(USER, 'deploy-1');
+
+      expect(result.vm_state).toBeNull();
+      expect(result.vm_ip).toBe('1.2.3.4');
+      expect(result.containers).toHaveLength(1);
+    });
+
+    it('tolerates a project that is not visible yet (404/422 → empty containers)', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(dbRow);
+      provisioning.getDockerProjectContainers.mockRejectedValue({ response: { status: 404 } });
+
+      const result = await service.getLiveStatus(USER, 'deploy-1');
+
+      expect(result.vm_state).toBe('running');
+      expect(result.containers).toEqual([]);
+    });
+
+    it('propagates unexpected Hostinger errors', async () => {
+      prisma.deploy.findUnique.mockResolvedValue(dbRow);
+      provisioning.getVM.mockRejectedValue({ response: { status: 500 } });
+
+      await expect(service.getLiveStatus(USER, 'deploy-1')).rejects.toEqual({
+        response: { status: 500 },
+      });
+    });
+
+    it('404s for a deploy owned by another user (no Hostinger calls)', async () => {
+      prisma.deploy.findUnique.mockResolvedValue({ ...dbRow, user_id: 99999n });
+
+      await expect(service.getLiveStatus(USER, 'deploy-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(provisioning.getVM).not.toHaveBeenCalled();
+      expect(provisioning.getDockerProjectContainers).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DeployView, LlmProvider, TopupTierView } from '@hermes/shared';
+import type { AgentLiveStatus, DeployView, LlmProvider, TopupTierView } from '@hermes/shared';
 import {
   deleteDeploy,
   fetchProviders,
+  getAgentLiveStatus,
   getDeploy,
   getTopupTiers,
   restartDeploy,
@@ -10,7 +11,15 @@ import {
   updateBotToken,
   updateLlmKey,
 } from '../api';
-import { STATUS_BADGE_CLASS, STATUS_LABELS } from '../deploy-status';
+import {
+  CONTAINER_HEALTH_CLASS,
+  CONTAINER_STATE_CLASS,
+  CONTAINER_STATE_LABELS,
+  STATUS_BADGE_CLASS,
+  STATUS_LABELS,
+  VM_STATE_CLASS,
+  VM_STATE_LABELS,
+} from '../deploy-status';
 import { errorMessage, llmKeyErrorMessage } from '../error-messages';
 import { hapticImpact, openBotChat, openTelegramUrl } from '../telegram';
 import { providerMeta } from './ProviderStep';
@@ -39,6 +48,7 @@ export function AgentDetailScreen({
   const [llmOpen, setLlmOpen] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
   const [botTokenOpen, setBotTokenOpen] = useState(false);
+  const [liveOpen, setLiveOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -102,7 +112,11 @@ export function AgentDetailScreen({
           >
             {deleting ? 'Удаляем…' : 'Да, удалить сервер'}
           </PixelButton>
-          <PixelButton variant="outline" disabled={deleting} onClick={() => setDeleteConfirm(false)}>
+          <PixelButton
+            variant="outline"
+            disabled={deleting}
+            onClick={() => setDeleteConfirm(false)}
+          >
             Отмена
           </PixelButton>
         </div>
@@ -148,6 +162,15 @@ export function AgentDetailScreen({
         onConfirm={() => void handleRestart()}
       />
 
+      <LiveStatusBlock
+        deployId={deployId}
+        open={liveOpen}
+        onToggle={() => {
+          hapticImpact('light');
+          setLiveOpen((v) => !v);
+        }}
+      />
+
       <LlmKeyBlock
         deployId={deployId}
         ready={ready}
@@ -177,7 +200,11 @@ export function AgentDetailScreen({
           hapticImpact('light');
           setBotTokenOpen((v) => !v);
         }}
-        onUpdated={() => void getDeploy(deployId).then(setDeploy).catch(() => {})}
+        onUpdated={() =>
+          void getDeploy(deployId)
+            .then(setDeploy)
+            .catch(() => {})
+        }
       />
 
       <div className="mt-auto flex flex-col gap-2.5 pb-3">
@@ -246,6 +273,102 @@ function RestartBlock({
   );
 }
 
+interface LiveStatusBlockProps {
+  deployId: string;
+  open: boolean;
+  onToggle: () => void;
+}
+
+/** On-demand live state from Hostinger (VM + Hermes container) — not a DB read. */
+function LiveStatusBlock({ deployId, open, onToggle }: LiveStatusBlockProps): ReactElement {
+  const [live, setLive] = useState<AgentLiveStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(): Promise<void> {
+    setLoading(true);
+    setError(null);
+    try {
+      setLive(await getAgentLiveStatus(deployId));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <PixelButton
+        variant="outline"
+        onClick={() => {
+          onToggle();
+          void load();
+        }}
+      >
+        Проверить состояние
+      </PixelButton>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5 border-2 border-edge p-3.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-left text-[10px] tracking-wide text-dim uppercase"
+      >
+        ▾ Состояние на сервере
+      </button>
+
+      {loading && <p className="text-[9px] tracking-wide text-dim">Запрашиваем Hostinger…</p>}
+      {error && <p className="text-[8px] tracking-wide text-alarm">{error}</p>}
+
+      {live && !loading && (
+        <>
+          <div className="flex items-center justify-between gap-2 text-[10px]">
+            <span className="text-dim">Сервер</span>
+            <span className={live.vm_state ? VM_STATE_CLASS[live.vm_state] : 'text-alarm'}>
+              {live.vm_state ? VM_STATE_LABELS[live.vm_state] : 'Не найден'}
+            </span>
+          </div>
+          {live.vm_ip && (
+            <div className="flex items-center justify-between gap-2 text-[10px]">
+              <span className="text-dim">IP</span>
+              <span>{live.vm_ip}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2 text-[10px]">
+            <span className="text-dim">Контейнер</span>
+            {live.containers.length === 0 ? (
+              <span className="text-alarm">Не найден</span>
+            ) : (
+              <span className="text-right">
+                {live.containers.map((c) => (
+                  <span key={c.id} className="block">
+                    <span className={CONTAINER_STATE_CLASS[c.state]}>
+                      {CONTAINER_STATE_LABELS[c.state]}
+                    </span>
+                    {c.health !== '' && (
+                      <span className={CONTAINER_HEALTH_CLASS[c.health]}> · {c.health}</span>
+                    )}
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+          <p className="text-[8px] text-dim">
+            Проверено {new Date(live.checked_at).toLocaleTimeString('ru-RU')}
+          </p>
+          <PixelButton variant="outline" onClick={() => void load()}>
+            Обновить
+          </PixelButton>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface LlmKeyBlockProps {
   deployId: string;
   ready: boolean;
@@ -256,7 +379,13 @@ interface LlmKeyBlockProps {
 
 type LlmState = 'idle' | 'saving' | 'success';
 
-function LlmKeyBlock({ deployId, ready, open, onToggle, onUpdated }: LlmKeyBlockProps): ReactElement {
+function LlmKeyBlock({
+  deployId,
+  ready,
+  open,
+  onToggle,
+  onUpdated,
+}: LlmKeyBlockProps): ReactElement {
   const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [providerId, setProviderId] = useState('');
   const [apiKey, setApiKey] = useState('');

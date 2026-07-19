@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import {
   LLM_PROVIDERS,
+  type AgentLiveStatus,
   type AuthenticatedUser,
   type BotTokenStatus,
   type CreateDeployResponse,
@@ -17,6 +18,7 @@ import {
   type UpdateLlmKeyResponse,
   type UpdateBotTokenResponse,
 } from '@hermes/shared';
+import { errorStatus } from '../common/retry';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretsService } from '../secrets/secrets.service';
 import { ProvisioningService } from '../provisioning/provisioning.service';
@@ -59,7 +61,10 @@ export class DeploysService {
       const live = await this.subscription.getLiveStatus(user);
       if (live !== 'active') {
         throw new HttpException(
-          { code: 'subscription_required', message: 'Активная подписка обязательна для создания агента' },
+          {
+            code: 'subscription_required',
+            message: 'Активная подписка обязательна для создания агента',
+          },
           HttpStatus.PAYMENT_REQUIRED,
         );
       }
@@ -260,6 +265,40 @@ export class DeploysService {
     await this.log(id, 'update_bot_token', 'success', `bot @${username}`);
     this.logger.log(`Bot token updated for deploy ${id} (@${username})`);
     return { ok: true };
+  }
+
+  /**
+   * Live state of the agent on the VPS (Hostinger getVM + Docker Manager
+   * containers), owner-checked. A tolerant snapshot: a VM that is not created
+   * yet or is already gone and a project that is not visible yet map to
+   * nulls/empties instead of errors; unexpected Hostinger failures propagate.
+   */
+  async getLiveStatus(user: AuthenticatedUser, id: string): Promise<AgentLiveStatus> {
+    const row = await this.findOwnedDeployOrThrow(id, user.telegram_id);
+    const checkedAt = new Date().toISOString();
+    if (!row.hostinger_vm_id) {
+      return { vm_state: null, vm_ip: row.vm_ip, containers: [], checked_at: checkedAt };
+    }
+    const vmId = Number(row.hostinger_vm_id);
+    const [vm, containers] = await Promise.all([
+      this.provisioning.getVM(vmId).catch((err: unknown) => {
+        if (errorStatus(err) === 404) return null;
+        throw err;
+      }),
+      this.provisioning
+        .getDockerProjectContainers(vmId, hermesProjectName(id))
+        .catch((err: unknown) => {
+          const status = errorStatus(err);
+          if (status === 404 || status === 422) return [];
+          throw err;
+        }),
+    ]);
+    return {
+      vm_state: vm?.state ?? null,
+      vm_ip: vm?.ipv4[0] ?? row.vm_ip,
+      containers,
+      checked_at: checkedAt,
+    };
   }
 
   /** Fetch a deploy row, enforcing ownership. 404 if missing or not owned. */

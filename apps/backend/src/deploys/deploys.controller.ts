@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  AgentLiveStatus,
   AuthenticatedUser,
   CreateDeployResponse,
   DeployView,
@@ -46,11 +47,16 @@ export class DeploysController {
   }
 
   @Get(':id')
-  getById(
+  getById(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<DeployView> {
+    return this.deploysService.getById(user, id);
+  }
+
+  @Get(':id/live-status')
+  getLiveStatus(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-  ): Promise<DeployView> {
-    return this.deploysService.getById(user, id);
+  ): Promise<AgentLiveStatus> {
+    return this.deploysService.getLiveStatus(user, id);
   }
 
   @Post(':id/restart')
@@ -82,10 +88,7 @@ export class DeploysController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.ACCEPTED)
-  teardown(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ): Promise<DeployView> {
+  teardown(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<DeployView> {
     return this.deploysService.requestTeardown(user, id);
   }
 }
